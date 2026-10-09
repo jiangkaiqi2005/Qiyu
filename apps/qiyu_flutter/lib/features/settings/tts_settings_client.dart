@@ -77,16 +77,16 @@ enum TtsTransport {
 /// 行与测试参照——只服务旧版 Host 的降级形态，不再进主链路；与宿主包
 /// `provider_config.dart` 同名常量同值，改动需两边同步。
 const qwenTtsDefaultEndpoint =
-    'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+    'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 
 /// 千问语音合成的模型名称缺省值：生产链路经元数据下推，本常量退役为
 /// 内置降级目录的数据行与测试参照（与宿主包侧同名常量同值）。
-const qwenTtsDefaultModel = 'qwen3-tts-flash';
+const qwenTtsDefaultModel = 'qwen-audio-3.1-tts-flash';
 
 /// 千问语音合成的音色缺省值（官方示例音色）：音色是自由输入框，任何
 /// 千问音色 ID 都能填。生产链路经元数据下推，本常量退役为内置降级目
 /// 录的数据行与测试参照（与宿主包侧同名常量同值）。
-const qwenTtsDefaultVoice = 'Cherry';
+const qwenTtsDefaultVoice = 'longanhuan_v3.1';
 
 /// 千问 3.1 新型号（qwen-audio-3.1-tts-flash）的官方新版地址模板
 /// （ADR 0020）：地址主机含 maas.aliyuncs.com 时 Host 按官方
@@ -179,10 +179,9 @@ const builtinTtsTierCatalog = <VoiceTierMetadata>[
         '本机不留声音文件。',
     modelLabel: '模型名称',
     modelHelperText:
-        '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
-        '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
-        '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
-        '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式）；'
+        '千问 3.1 语音合成型号（如 $qwenTtsDefaultModel）：'
+        '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式，'
+        '默认音色 $qwenTtsDefaultVoice）；'
         '也可填官方 maas HTTP 端点 $qwenTtsMaasAddressTemplate，'
         '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
         '（栖语不代填，按句等整段返回）；型号支持范围见'
@@ -201,8 +200,6 @@ const builtinTtsTierCatalog = <VoiceTierMetadata>[
     voiceMode: VoiceTierVoiceMode.freeInput,
     defaultVoice: qwenTtsDefaultVoice,
     voiceHint: qwenTtsDefaultVoice,
-    realtimeModelSuffix: '-realtime',
-    realtimeExtraParamsHint: '该档不支持自定义高级参数',
   ),
   VoiceTierMetadata(
     wireName: 'custom',

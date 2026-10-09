@@ -10,25 +10,15 @@
 
 | 型号 | 说明 |
 | --- | --- |
-| `qwen3-asr-flash` | 现行识别型号（默认），整段录音上传后返回文字 |
+| `qwen-audio-3.1-asr-flash` | 现行识别型号（默认），整段录音上传后返回文字 |
 
 ## 千问朗读档（文字转语音）
 
-**qwen3 现行合成型号**——服务地址保持设置页缺省值（`https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`）：
+服务地址填官方推理地址 `wss://dashscope.aliyuncs.com/api-ws/v1/inference`（设置页缺省值，连接测试给出建议时可直接一键回填）：
 
 | 型号 | 说明 |
 | --- | --- |
-| `qwen3-tts-flash` | 现行合成型号（默认），流式返回 |
-| `qwen3-tts-flash-realtime` | 实时合成型号，栖语会自动走流式通道，填法不变 |
-| `qwen3-tts-instruct-flash-realtime` | 同上，支持用自然语言指令控制语气 |
-
-**Qwen-Audio-TTS 3.x 新版语音通道**——服务地址填官方推理地址 `wss://dashscope.aliyuncs.com/api-ws/v1/inference`（连接测试给出建议时可直接一键回填）：
-
-| 型号 | 状态 |
-| --- | --- |
-| `qwen-audio-3.0-tts-flash` | 可用（2026-09-25 全链路实测通过） |
-| `qwen-audio-3.0-tts-plus` | 同通道可用 |
-| `qwen-audio-3.1-tts-flash` | 暂不可用：型号已在服务端注册，但合成阶段被服务端引擎拒绝（2026-09-25 实测），等官方修复后无需改栖语任何设置即可接通 |
+| `qwen-audio-3.1-tts-flash` | 现行合成型号（默认），推理通道按句流式，默认音色 `longanhuan_v3.1` |
 
 也可以改填官方 maas HTTP 端点 `https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer`，把 `{业务空间ID}` 换成自己的百炼业务空间 ID——这条路要求自有百炼 Key，作为推理地址的备选。
 
@@ -42,14 +32,10 @@
 
 | 型号 | 原因 | 替代 |
 | --- | --- | --- |
-| `qwen-audio-3.1-tts-next` | 统一音频生成型号，官方没有给朗读用的通道 | `qwen3-tts-flash` |
-| `qwen-audio-3.1-realtime-plus` | 端到端语音对话型号，不归转写或朗读用 | `qwen3-tts-flash` |
-| `qwen-audio-3.1-asr-flash-message` | 要边说边传的流式识别通道 | `qwen3-asr-flash` |
-| `qwen-audio-3.0-asr-flash-streaming` | 要边说边传的流式识别通道 | `qwen3-asr-flash` |
-| `qwen3-asr-flash-realtime` | 要边说边传的流式识别通道 | `qwen3-asr-flash` |
-| `qwen-audio-3.1-asr-flash-filetrans` | 录音文件转写型号 | `qwen3-asr-flash` |
-| `qwen-audio-3.0-asr-flash-filetrans` | 录音文件转写型号 | `qwen3-asr-flash` |
-| `qwen3-asr-flash-filetrans` | 录音文件转写型号 | `qwen3-asr-flash` |
+| `qwen-audio-3.1-tts-next` | 统一音频生成型号，官方没有给朗读用的通道 | `qwen-audio-3.1-tts-flash` |
+| `qwen-audio-3.1-realtime-plus` | 端到端语音对话型号，不归转写或朗读用 | `qwen-audio-3.1-tts-flash` |
+| `qwen-audio-3.1-asr-flash-message` | 要边说边传的流式识别通道 | `qwen-audio-3.1-asr-flash` |
+| `qwen-audio-3.1-asr-flash-filetrans` | 录音文件转写型号 | `qwen-audio-3.1-asr-flash` |
 
 ## 清单里没有的型号
 

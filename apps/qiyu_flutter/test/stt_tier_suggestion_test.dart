@@ -32,7 +32,7 @@ void main() {
           'kind': 'switchTier',
           'targetFamily': 'transcription',
           'targetProvider': 'qwen_asr',
-          'targetModel': 'qwen3-asr-flash',
+          'targetModel': 'qwen-audio-3.1-asr-flash',
           'defaultEndpoint': qwenAsrDefaultEndpoint,
           'reason': '这个型号要走千问识别档。',
         },
@@ -55,13 +55,13 @@ void main() {
           'kind': 'unsupported',
           'targetFamily': 'transcription',
           'targetProvider': 'qwen_asr',
-          'targetModel': 'qwen3-asr-flash',
+          'targetModel': 'qwen-audio-3.1-asr-flash',
           'defaultEndpoint': qwenAsrDefaultEndpoint,
           'reason': '这是录音文件转写型号，栖语不支持。',
         },
       }).tierSuggestion;
       expect(unsupported!.kind, VoiceSuggestionKind.unsupported);
-      expect(unsupported.targetModel, 'qwen3-asr-flash');
+      expect(unsupported.targetModel, 'qwen-audio-3.1-asr-flash');
 
       expect(
         ProviderTestResult.fromJson({
@@ -91,7 +91,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -100,7 +100,7 @@ void main() {
       expect(plan!.crossTier, isTrue);
       expect(plan.addressAction, RefillAddressAction.suggestedEndpoint);
       expect(plan.baseUrl, qwenAsrDefaultEndpoint);
-      expect(plan.model, 'qwen3-asr-flash');
+      expect(plan.model, 'qwen-audio-3.1-asr-flash');
       form.dispose();
     });
 
@@ -112,7 +112,7 @@ void main() {
           kind: VoiceSuggestionKind.unsupported,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这是录音文件转写型号，栖语不支持。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -120,7 +120,7 @@ void main() {
       expect(plan!.crossTier, isFalse);
       expect(plan.addressAction, RefillAddressAction.keepCurrent);
       expect(plan.baseUrl, qwenAsrDefaultEndpoint);
-      expect(plan.model, 'qwen3-asr-flash');
+      expect(plan.model, 'qwen-audio-3.1-asr-flash');
       form.dispose();
     });
 
@@ -220,7 +220,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -231,7 +231,7 @@ void main() {
       expect(find.text('这个型号要走千问识别档。'), findsOneWidget);
       expect(find.byKey(const Key('stt-tier-suggestion-apply')), findsOneWidget);
       // 明细多行合并在同一个 Text 里：按子串找。
-      expect(find.textContaining('建议型号：qwen3-asr-flash'), findsOneWidget);
+      expect(find.textContaining('建议型号：qwen-audio-3.1-asr-flash'), findsOneWidget);
 
       // 表 miss：普通失败行，没有卡片与按钮。
       gateway.testResult = const ProviderTestResult(
@@ -250,7 +250,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -276,7 +276,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -293,7 +293,7 @@ void main() {
       await tester.tap(find.byKey(const Key('stt-tier-suggestion-confirm')));
       await tester.pumpAndSettle();
 
-      expect(field(tester, 'stt-model').controller!.text, 'qwen3-asr-flash');
+      expect(field(tester, 'stt-model').controller!.text, 'qwen-audio-3.1-asr-flash');
       expect(
         field(tester, 'stt-base-url').controller!.text,
         qwenAsrDefaultEndpoint,
@@ -308,7 +308,7 @@ void main() {
           kind: VoiceSuggestionKind.unsupported,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这是录音文件转写型号，栖语不支持。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -332,7 +332,7 @@ void main() {
 
       // 卡片给原因与替代型号。
       expect(find.text('这是录音文件转写型号，栖语不支持。'), findsOneWidget);
-      expect(find.text('可以改用 qwen3-asr-flash。'), findsOneWidget);
+      expect(find.text('可以改用 qwen-audio-3.1-asr-flash。'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('stt-tier-suggestion-apply')));
       await tester.pumpAndSettle();
@@ -341,7 +341,7 @@ void main() {
       expect(find.textContaining('API Key：保留'), findsOneWidget);
       expect(
         find.textContaining(
-          'qwen-audio-3.1-asr-flash-filetrans → qwen3-asr-flash',
+          'qwen-audio-3.1-asr-flash-filetrans → qwen-audio-3.1-asr-flash',
         ),
         findsOneWidget,
       );
@@ -349,7 +349,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // 型号改成替代型号；地址与 Key 草稿原样保留。
-      expect(field(tester, 'stt-model').controller!.text, 'qwen3-asr-flash');
+      expect(field(tester, 'stt-model').controller!.text, 'qwen-audio-3.1-asr-flash');
       expect(
         field(tester, 'stt-base-url').controller!.text,
         qwenAsrDefaultEndpoint,
@@ -363,7 +363,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
         ),
       );
@@ -398,7 +398,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),
@@ -425,7 +425,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
           defaultEndpoint: qwenAsrDefaultEndpoint,
         ),

@@ -36,35 +36,6 @@ void main() {
       }
     });
 
-    test('3.0 或非 3.1 模型保持默认音色为 qwenTtsMaasDefaultVoice (longanhuan_v3.6)', () {
-      final models = [
-        'qwen-audio-3.0-tts-flash',
-        'qwen-audio-3.0-tts',
-        'cosyvoice-v1',
-      ];
-      for (final model in models) {
-        for (final voice in [null, '', '   ']) {
-          final config = TtsConfig(
-            provider: TtsProviderKind.qwenTts,
-            baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-            model: model,
-            voice: voice,
-          );
-          final payload = QwenWsInferenceTtsGateway.runTaskPayload(config);
-          final parameters = payload['parameters'] as Map<String, Object?>;
-          expect(
-            parameters['voice'],
-            qwenTtsMaasDefaultVoice,
-            reason: 'model=$model, voice="$voice"',
-          );
-          expect(parameters['voice'], 'longanhuan_v3.6');
-          expect(parameters['format'], 'wav');
-          expect(parameters['sample_rate'], 24000);
-          expect(payload['model'], model);
-        }
-      }
-    });
-
     test('显式指定音色时原样使用，不被默认音色覆盖', () {
       const customVoices = [
         'longanlingxin_v3.1',
@@ -275,56 +246,6 @@ void main() {
       final parameters = payload['parameters']! as Map<String, Object?>;
       expect(parameters['voice'], qwenTts31DefaultVoice);
       expect(parameters['voice'], 'longanhuan_v3.1');
-    });
-
-    test('3.0 模型默认外发 voice 为 longanhuan_v3.6', () async {
-      final connector = _ScriptedWsConnector(
-        onTextSend: (text, connection) {
-          final event = jsonDecode(text) as Map<String, Object?>;
-          final header = event['header']! as Map<String, Object?>;
-          final action = header['action'] as String;
-          switch (action) {
-            case 'run-task':
-              connection.serverText(
-                jsonEncode({
-                  'header': {'task_id': 't-2', 'event': 'task-started'},
-                  'payload': {},
-                }),
-              );
-            case 'continue-task':
-              connection.serverBinary(wrapPcmAsWav(Uint8List.fromList([1, 2]), sampleRate: 24000));
-            case 'finish-task':
-              connection.serverBinary(wrapPcmAsWav(Uint8List.fromList([3, 4]), sampleRate: 24000));
-              connection.serverText(
-                jsonEncode({
-                  'header': {'task_id': 't-2', 'event': 'task-finished'},
-                  'payload': {},
-                }),
-              );
-          }
-        },
-      );
-
-      final gateway = QwenWsInferenceTtsGateway(connector);
-      final audio = await gateway.synthesize(
-        config: const TtsConfig(
-          provider: TtsProviderKind.qwenTts,
-          baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-          model: 'qwen-audio-3.0-tts-flash',
-        ),
-        apiKey: 'sk-dashscope-test',
-        text: '晚安。',
-      );
-
-      expect(audio, isNotEmpty);
-      final sentTexts = connector.connection.sentText;
-      expect(sentTexts, isNotEmpty);
-      final runTaskJson =
-          jsonDecode(sentTexts.first) as Map<String, Object?>;
-      final payload = runTaskJson['payload']! as Map<String, Object?>;
-      final parameters = payload['parameters']! as Map<String, Object?>;
-      expect(parameters['voice'], qwenTtsMaasDefaultVoice);
-      expect(parameters['voice'], 'longanhuan_v3.6');
     });
   });
 }

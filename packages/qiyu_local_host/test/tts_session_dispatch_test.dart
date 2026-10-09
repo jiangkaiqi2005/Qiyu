@@ -84,40 +84,6 @@ void main() {
       expect(connector.connectCalls, isZero);
     });
 
-    test('千问 -realtime 型号配 wss 推理地址：型号驱动先于地址判定', () async {
-      final connector = _HandshakeWsConnector(
-        initialText: jsonEncode({'type': 'session.created', 'event_id': 'e0'}),
-      );
-      final gateway = TtsModelGateway(
-        _ExplodingHttpClient(),
-        webSocketConnector: connector,
-      );
-
-      final session = await gateway.openSession(
-        config: TtsConfig(
-          provider: TtsProviderKind.qwenTts,
-          baseUrl: qwenTtsWsInferenceEndpoint,
-          model: '${qwenTtsDefaultModel}x-realtime',
-        ),
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-
-      expect(session, isNotNull);
-      expect(connector.connectCalls, 1);
-      // 落 Realtime 通道（派生端点 + model 走 query），未经典 WS 推理。
-      expect(
-        connector.lastUri.toString(),
-        'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
-        '?model=${qwenTtsDefaultModel}x-realtime',
-      );
-      expect(
-        connector.lastHeaders!['authorization'],
-        'Bearer sk-dashscope-test',
-      );
-      session!.cancel();
-    });
-
     test('千问 wss 推理地址配普通型号：经典 WS 推理会话，地址原样建连',
         () async {
       final connector = _HandshakeWsConnector();
@@ -143,7 +109,7 @@ void main() {
       session!.cancel();
     });
 
-    test('千问现行 multimodal 地址配普通型号：不开会话（票二分句模式）',
+    test('千问 HTTP Maas 地址配普通型号：不开会话（票二分句模式）',
         () async {
       final connector = _HandshakeWsConnector();
       final gateway = TtsModelGateway(
@@ -152,9 +118,11 @@ void main() {
       );
 
       final session = await gateway.openSession(
-        config: TtsConfig(
+        config: const TtsConfig(
           provider: TtsProviderKind.qwenTts,
-          baseUrl: qwenTtsDefaultEndpoint,
+          baseUrl:
+              'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+              '/api/v1/services/audio/tts/SpeechSynthesizer',
           model: qwenTtsDefaultModel,
         ),
         apiKey: 'sk-dashscope-test',
@@ -218,36 +186,6 @@ void main() {
       expect(client.lastUri.toString(), volcTtsDefaultEndpoint);
       expect(connector.connectCalls, isZero);
     });
-
-    test('千问 realtime 型号的句级流式落现行 multimodal 通道（D1 口径）',
-        () async {
-      final connector = _HandshakeWsConnector();
-      final client = _EmptyResponseHttpClient();
-      final gateway = TtsModelGateway(
-        client,
-        webSocketConnector: connector,
-      );
-
-      await expectLater(
-        gateway
-            .synthesizeStream(
-              config: TtsConfig(
-                provider: TtsProviderKind.qwenTts,
-                baseUrl: qwenTtsDefaultEndpoint,
-                model: '${qwenTtsDefaultModel}x-realtime',
-              ),
-              apiKey: 'sk-dashscope-test',
-              text: '晚安。',
-            )
-            .toList(),
-        throwsA(isA<TtsGatewayException>()),
-      );
-      // realtime 形状的流式回落行是现行 multimodal 网关：会话开不了时
-      // 整轮不开语音（D1），这句级通道只是解析层面的保底。
-      expect(client.postCalls, 1);
-      expect(client.lastUri.toString(), qwenTtsDefaultEndpoint);
-      expect(connector.connectCalls, isZero);
-    });
   });
 }
 
@@ -264,10 +202,7 @@ TtsConfig _volcConfig({TtsTransport transport = TtsTransport.httpChunk}) =>
 /// 千问 Realtime 建连即回 session.created，经典推理对 run-task 回
 /// task-started。openSession 握手完成即够用，不回放音频。
 final class _HandshakeWsConnector implements ProviderWebSocketConnector {
-  _HandshakeWsConnector({this.initialText});
-
-  /// 建连后服务端主动发出的首帧（千问 Realtime 的 session.created）。
-  final String? initialText;
+  _HandshakeWsConnector();
 
   int connectCalls = 0;
   Uri? lastUri;
@@ -281,18 +216,12 @@ final class _HandshakeWsConnector implements ProviderWebSocketConnector {
     connectCalls += 1;
     lastUri = uri;
     lastHeaders = headers;
-    return _HandshakeConnection(initialText);
+    return _HandshakeConnection();
   }
 }
 
 final class _HandshakeConnection implements ProviderWebSocketConnection {
-  _HandshakeConnection(String? initialText) {
-    // 单订阅流在建连与读循环启动之间缓冲首帧：真实连接上服务端首帧也
-    // 可能早于客户端 listen 到达。
-    if (initialText != null) {
-      _text.add(initialText);
-    }
-  }
+  _HandshakeConnection();
 
   final _binary = StreamController<List<int>>();
   final _text = StreamController<String>();

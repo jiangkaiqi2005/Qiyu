@@ -24,8 +24,8 @@ const _volcConfig = TtsConfig(
 
 const _qwenConfig = TtsConfig(
   provider: TtsProviderKind.qwenTts,
-  baseUrl: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-  model: 'qwen3-tts-flash-realtime',
+  baseUrl: qwenTtsDefaultEndpoint,
+  model: qwenTtsDefaultModel,
   apiKey: 'sk-dashscope-test',
 );
 
@@ -842,324 +842,11 @@ void main() {
     });
   });
 
-  group('千问 Realtime WS 合成会话', () {
-    test('流式追加文本：PCM delta 转块，session.finish 收尾', () async {
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
-      );
-
-      final session = await QwenRealtimeTtsGateway(connector).openSession(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      expect(session, isNotNull);
-
-      final chunks = <VoiceAudioChunk>[];
-      final done = Completer<void>();
-      session!.chunks.listen(
-        chunks.add,
-        onError: (Object error) => fail('不应失败：$error'),
-        onDone: done.complete,
-      );
-
-      session.appendText('我在');
-      await _settle();
-      session.appendText('。刚忙完。');
-      await _settle();
-      await session.close();
-      await done.future.timeout(const Duration(seconds: 5));
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [1, 2],
-        [3],
-        [1, 2],
-        [3],
-      ]);
-      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
-    });
-
-    test('上行事件形状与派生端点：Bearer 鉴权、model 走 query', () async {
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
-      );
-
-      final session = await QwenRealtimeTtsGateway(connector).openSession(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      session!.appendText('我在');
-      await _settle();
-      await session.close();
-      await _settle();
-
-      expect(
-        connector.lastUri.toString(),
-        'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
-        '?model=qwen3-tts-flash-realtime',
-      );
-      expect(connector.lastHeaders!['authorization'], 'Bearer sk-dashscope-test');
-
-      final events = connector.connection!.sentText.map(
-        _decodeClientTextEvent,
-      );
-      expect(events.map((event) => event['type']), [
-        'session.update',
-        'input_text_buffer.append',
-        'session.finish',
-      ]);
-      // session.update：server_commit 分段 + PCM 24kHz + 音色（与 HTTP
-      // 档同一缺省音色口径）。
-      expect(events.first['session'], {
-        'mode': 'server_commit',
-        'voice': 'Cherry',
-        'language_type': 'Chinese',
-        'response_format': 'pcm',
-        'sample_rate': 24000,
-      });
-      // input_text_buffer.append：增量原文逐段进，不切句。
-      expect(events.elementAt(1)['text'], '我在');
-    });
-
-    test('整段路径（试听/重听）：一次性会话收完整 PCM 并包 WAV 头', () async {
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
-      );
-
-      final audio = await QwenRealtimeTtsGateway(connector).synthesize(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        text: '你好，我是栖语。',
-      );
-      final wav = Uint8List.fromList(audio);
-
-      // WAV 头 + 一段 PCM（[1,2] 与 [3] 两个 delta 块）：现有整段播放器
-      // 零改动。
-      expect(ascii.decode(wav.sublist(0, 4)), 'RIFF');
-      expect(ascii.decode(wav.sublist(8, 12)), 'WAVE');
-      expect(
-        ByteData.sublistView(wav, 24, 28).getUint32(0, Endian.little),
-        24000,
-      );
-      expect(wav.sublist(44), [1, 2, 3]);
-    });
-
-    test('建连前 SSRF 拒绝与错误事件分类', () async {
-      final connector = _ScriptedTtsWsConnector();
-      await expectLater(
-        QwenRealtimeTtsGateway(connector).openSession(
-          config: const TtsConfig(
-            provider: TtsProviderKind.qwenTts,
-            baseUrl: 'http://127.0.0.1:1/api/v1/services/aigc/multimodal-generation/generation',
-            model: 'qwen3-tts-flash-realtime',
-            apiKey: 'sk-dashscope-test',
-          ),
-          apiKey: 'sk-dashscope-test',
-          sessionId: 'chat-1',
-        ),
-        throwsA(
-          isA<TtsGatewayException>().having(
-            (e) => e.message,
-            'message',
-            '语音服务地址不允许指向本机或内网。',
-          ),
-        ),
-      );
-      expect(connector.connectCalls, isZero);
-
-      final unauthorized = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) => _qwenScript.respond(
-          _decodeClientTextEvent(text),
-          connection,
-          errorType: 'error',
-          errorCode: 'invalid_api_key',
-        ),
-      );
-      final session = await QwenRealtimeTtsGateway(unauthorized).openSession(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      final failure = Completer<Object>();
-      session!.chunks.listen((_) {}, onError: failure.complete);
-      session.appendText('我在');
-      await expectLater(
-        failure.future.timeout(const Duration(seconds: 5)),
-        completion(
-          isA<TtsGatewayException>()
-              .having((e) => e.kind, 'kind', ModelFailureKind.authentication)
-              .having(
-                (e) => e.message,
-                'message',
-                'API Key 未通过语音合成服务验证。',
-              ),
-        ),
-      );
-
-      final limited = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) => _qwenScript.respond(
-          _decodeClientTextEvent(text),
-          connection,
-          errorType: 'error',
-          errorCode: 'rate_limit_exceeded',
-        ),
-      );
-      final limitedSession = await QwenRealtimeTtsGateway(limited).openSession(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      final limitedFailure = Completer<Object>();
-      limitedSession!.chunks.listen((_) {}, onError: limitedFailure.complete);
-      limitedSession.appendText('我在');
-      await expectLater(
-        limitedFailure.future.timeout(const Duration(seconds: 5)),
-        completion(
-          isA<TtsGatewayException>().having(
-            (e) => e.kind,
-            'kind',
-            ModelFailureKind.rateLimited,
-          ),
-        ),
-      );
-    });
-
-    test('中途断流：没等到 session.finished 按音频不完整失败', () async {
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) => _qwenScript.respond(
-          _decodeClientTextEvent(text),
-          connection,
-          dropOnFinish: true,
-        ),
-      );
-
-      final session = await QwenRealtimeTtsGateway(connector).openSession(
-        config: _qwenConfig,
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      final failure = Completer<Object>();
-      session!.chunks.listen((_) {}, onError: failure.complete);
-
-      session.appendText('我在');
-      await _settle();
-      await session.close();
-
-      await expectLater(
-        failure.future.timeout(const Duration(seconds: 5)),
-        completion(
-          isA<TtsGatewayException>()
-              .having((e) => e.kind, 'kind', ModelFailureKind.contentParsing)
-              .having((e) => e.message, 'message', '语音合成服务返回的音频不完整。'),
-        ),
-      );
-    });
-
-    test('握手一步超时：session.created 永不来按连接超时失败', () async {
-      // 千问握手只有一步（建连后等 session.created，再发 session.update）。
-      // 连接器建连成功但永不发首帧：握手等待自带预算，到点按「连接超时」
-      // 失败——与豆包两级握手的同律口径一致（握手阶段不武装空闲计时器）。
-      final connector = _ScriptedTtsWsConnector();
-
-      await expectLater(
-        QwenRealtimeTtsGateway(
-          connector,
-          timeout: const Duration(milliseconds: 50),
-        ).openSession(
-          config: _qwenConfig,
-          apiKey: 'sk-dashscope-test',
-          sessionId: 'chat-1',
-        ),
-        throwsA(
-          isA<TtsGatewayException>()
-              .having((e) => e.kind, 'kind', ModelFailureKind.timeout)
-              .having((e) => e.message, 'message', '连接语音合成服务超时。'),
-        ),
-      );
-      expect(connector.connectCalls, 1);
-    });
-
-    test('服务层纯停顿过滤（票 02）：纯停顿增量不上线，实词照常上送', () async {
-      // 走真实服务层与真千问 Realtime 网关（TtsSettingsService →
-      // TtsModelGateway → QwenRealtimeTtsGateway）：纯停顿回复一个
-      // input_text_buffer.append 帧都不发——「沉默不送合成」落在
-      // wire 上验证；实词增量照常上送，内容回复行为不变。
-      final directory = Directory.systemTemp.createTempSync('qiyu-tts-pause');
-      addTearDown(() => directory.deleteSync(recursive: true));
-      final configPath =
-          '${directory.path}${Platform.pathSeparator}provider.json';
-      await JsonProviderConfigRepository(filePath: configPath).saveTts(
-        _qwenConfig,
-      );
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
-      );
-      final service = TtsSettingsService(
-        JsonProviderConfigRepository(filePath: configPath),
-        TtsModelGateway(
-          _UnreachableBytesHttpClient(),
-          webSocketConnector: connector,
-        ),
-      );
-
-      final session = await service.openSession(sessionId: 'chat-1');
-      expect(session, isNotNull);
-      // 单订阅块流先订阅（交付管线同口径），收尾的 done 才有着落。
-      final chunksDone = Completer<void>();
-      session!.chunks.listen((_) {}, onDone: chunksDone.complete);
-
-      session.appendText('。。。');
-      session.appendText('……？');
-      await _settle();
-      expect(
-        connector.connection!.sentText.map(_clientEventType).toList(),
-        ['session.update'],
-        reason: '纯停顿增量不产生任何合成上行帧',
-      );
-
-      // 实词增量到达：先补发扣住的纯停顿增量（文本序与到达序一致），
-      // 再发送实词；收尾只发 finish，纯停顿回复没有多余补发。
-      session.appendText('在。');
-      await session.close();
-      await chunksDone.future.timeout(const Duration(seconds: 5));
-      expect(
-        connector.connection!.sentText.map(_clientEventType).toList(),
-        [
-          'session.update',
-          'input_text_buffer.append',
-          'input_text_buffer.append',
-          'session.finish',
-        ],
-      );
-      expect(
-        _decodeClientTextEvent(connector.connection!.sentText[1])['text'],
-        '。。。……？',
-        reason: '扣住的纯停顿增量在实词前按到达序补发',
-      );
-      expect(
-        _decodeClientTextEvent(connector.connection!.sentText[2])['text'],
-        '在。',
-      );
-    });
-  });
-
   group('千问 WS 推理（经典 SpeechSynthesizer）合成会话', () {
     const inferenceConfig = TtsConfig(
       provider: TtsProviderKind.qwenTts,
       baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-      model: 'qwen-audio-3.0-tts-flash',
+      model: 'qwen-audio-3.1-tts-flash',
       apiKey: 'sk-dashscope-test',
     );
 
@@ -1315,12 +1002,12 @@ void main() {
         'task_group': 'audio',
         'task': 'tts',
         'function': 'SpeechSynthesizer',
-        'model': 'qwen-audio-3.0-tts-flash',
+        'model': 'qwen-audio-3.1-tts-flash',
         // 音色空缺回落本家族官方示例音色；format/sample_rate 缺省
         // wav/24000（与 maas 形状同律）。
         'parameters': {
           'text_type': 'PlainText',
-          'voice': 'longanhuan_v3.6',
+          'voice': 'longanhuan_v3.1',
           'format': 'wav',
           'sample_rate': 24000,
         },
@@ -1732,13 +1419,22 @@ void main() {
   });
 
   group('连续供给会话的分派', () {
-    test('豆包 ws_bidirection 与千问 realtime 型号开会话，其余不开', () async {
+    test('豆包 ws_bidirection 与千问 wss 推理开会话，其余不开', () async {
       final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
         onBinarySend: (frame, connection) =>
             _volcScript.respond(_decodeClientEvent(frame), connection),
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
+        onTextSend: (text, connection) {
+          final event = jsonDecode(text) as Map<String, Object?>;
+          final action = (event['header'] as Map?)?['action'] as String?;
+          if (action == 'run-task') {
+            connection.serverText(
+              jsonEncode({
+                'header': {'task_id': 't-1', 'event': 'task-started'},
+                'payload': {},
+              }),
+            );
+          }
+        },
       );
       final gateway = TtsModelGateway(
         _ExplodingBytesHttpClient(),
@@ -1770,7 +1466,7 @@ void main() {
         isNull,
       );
 
-      // 千问档：型号驱动——realtime 型号开会话，其余走 HTTP SSE。
+      // 千问档：wss 推理地址开会话，Maas HTTP 不开会话。
       expect(
         await gateway.openSession(
           config: _qwenConfig,
@@ -1784,8 +1480,9 @@ void main() {
           config: const TtsConfig(
             provider: TtsProviderKind.qwenTts,
             baseUrl:
-                'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-            model: 'qwen3-tts-flash',
+                'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+                '/api/v1/services/audio/tts/SpeechSynthesizer',
+            model: qwenTtsDefaultModel,
             apiKey: 'sk-dashscope-test',
           ),
           apiKey: 'sk-dashscope-test',
@@ -1865,40 +1562,8 @@ void main() {
     });
   });
 
-  group('千问朗读档地址派形状的四分支分派（票 07）', () {
-    // 分派优先级：① 型号驱动（-realtime）→ ② 地址 scheme ws/wss →
-    // ③ 主机含 maas.aliyuncs.com（HTTP maas 形状）→ ④ 现行 multimodal。
-    // 既有三分支的用例在原文件逐字不动，本组只锁优先级与第三分支。
-    test('① wss 地址配 -realtime 型号：Realtime 网关优先（派生 realtime 路径）', () async {
-      final connector = _ScriptedTtsWsConnector(
-        initialText: _qwenSessionCreated,
-        onTextSend: (text, connection) =>
-            _qwenScript.respond(_decodeClientTextEvent(text), connection),
-      );
-      final session = await TtsModelGateway(
-        _ExplodingBytesHttpClient(),
-        webSocketConnector: connector,
-      ).openSession(
-        config: const TtsConfig(
-          provider: TtsProviderKind.qwenTts,
-          baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-          model: 'qwen3-tts-flash-realtime',
-          apiKey: 'sk-dashscope-test',
-        ),
-        apiKey: 'sk-dashscope-test',
-        sessionId: 'chat-1',
-      );
-      expect(session, isNotNull);
-      // Realtime 网关的既有派生逻辑天然支持 wss 地址：路径按协议写死，
-      // 不保留用户地址里的推理路径。
-      expect(
-        connector.lastUri.toString(),
-        'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
-        '?model=qwen3-tts-flash-realtime',
-      );
-    });
-
-    test('② wss 地址：整段与流式都走 WS 推理会话，HTTP 客户端零调用', () async {
+  group('千问朗读档形状分派（WS 推理 vs Maas HTTP）', () {
+    test('wss 地址：整段与流式都走 WS 推理会话，HTTP 客户端零调用', () async {
       final connector = _ScriptedTtsWsConnector(
         onTextSend: (text, connection) {
           final event = jsonDecode(text) as Map<String, Object?>;
@@ -1931,7 +1596,7 @@ void main() {
       const wssConfig = TtsConfig(
         provider: TtsProviderKind.qwenTts,
         baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-        model: 'qwen-audio-3.0-tts-flash',
+        model: 'qwen-audio-3.1-tts-flash',
         apiKey: 'sk-dashscope-test',
       );
 
@@ -2044,11 +1709,6 @@ void main() {
   });
 }
 
-/// 千问建连后服务端主动发出的首帧（官方生命周期：session.created 先于
-/// 客户端的 session.update）。
-const _qwenSessionCreated =
-    '{"type":"session.created","event_id":"e-0",'
-    '"session":{"id":"sess-1","model":"qwen3-tts-flash-realtime"}}';
 
 /// 官方示例时序的豆包脚本：客户端事件 → 服务端帧。
 final _volcScript = _VolcBidirectionScript();
@@ -2103,62 +1763,11 @@ final class _VolcBidirectionScript {
   }
 }
 
-/// 千问 Realtime 脚本：客户端事件 → 服务端事件。
-final _qwenScript = _QwenRealtimeScript();
-
-final class _QwenRealtimeScript {
-  void respond(
-    Map<String, Object?> event,
-    _ScriptedTtsWsConnection connection, {
-    bool dropOnFinish = false,
-    String? errorType,
-    String? errorCode,
-  }) {
-    switch (event['type']) {
-      case 'session.update':
-        connection.serverText(
-          jsonEncode({'type': 'session.updated', 'event_id': 'e-1'}),
-        );
-      case 'input_text_buffer.append':
-        if (errorType case final type?) {
-          connection.serverText(
-            jsonEncode({
-              'type': type,
-              'error': {'code': ?errorCode, 'message': 'upstream secret detail'},
-            }),
-          );
-          return;
-        }
-        connection.serverText(
-          jsonEncode({
-            'type': 'response.audio.delta',
-            'delta': base64Encode([1, 2]),
-          }),
-        );
-        connection.serverText(
-          jsonEncode({
-            'type': 'response.audio.delta',
-            'delta': base64Encode([3]),
-          }),
-        );
-      case 'session.finish':
-        if (dropOnFinish) {
-          connection.drop();
-          return;
-        }
-        connection.serverText(jsonEncode({'type': 'session.finished'}));
-    }
-  }
-}
-
-/// 脚本化 WS 连接器：记录上行帧并按协议脚本回放服务端帧。[initialText]
-/// 是建连后服务端主动发出的首帧（千问的 session.created——豆包等客户端
-/// StartConnection 之后才回，由脚本负责）。
+/// 脚本化 WS 连接器：记录上行帧并按协议脚本回放服务端帧。
 final class _ScriptedTtsWsConnector implements ProviderWebSocketConnector {
   _ScriptedTtsWsConnector({
     this.onBinarySend,
     this.onTextSend,
-    this.initialText,
     this.connectError,
   });
 
@@ -2169,7 +1778,6 @@ final class _ScriptedTtsWsConnector implements ProviderWebSocketConnector {
   onBinarySend;
   final void Function(String text, _ScriptedTtsWsConnection connection)?
   onTextSend;
-  final String? initialText;
 
   int connectCalls = 0;
   Uri? lastUri;
@@ -2195,9 +1803,6 @@ final class _ScriptedTtsWsConnector implements ProviderWebSocketConnector {
     lastHeaders = headers;
     final created = _ScriptedTtsWsConnection(this);
     connections.add(created);
-    if (initialText case final text?) {
-      created.serverText(text);
-    }
     return created;
   }
 }
@@ -2313,8 +1918,6 @@ Map<String, Object?> _decodeClientEvent(List<int> frame) {
       as Map<String, Object?>;
 }
 
-Map<String, Object?> _decodeClientTextEvent(String text) =>
-    jsonDecode(text) as Map<String, Object?>;
 
 /// 构造一帧服务端 JSON 事件帧（位域与实现同口径，见 ADR 0019）。
 Uint8List _serverEventFrame(
@@ -2497,24 +2100,3 @@ Uint8List _inferenceWavFrame(List<int> pcm, {bool extended = false}) {
   return bytes.takeBytes();
 }
 
-/// 纯停顿过滤用例（票 02）的客户端事件类型视图：sentText 是握手、
-/// 追加与收尾帧的原始 JSON，断言只看 type 序列与 append 载荷。
-String _clientEventType(String text) =>
-    _decodeClientTextEvent(text)['type']! as String;
-
-/// 纯停顿过滤用例的 HTTP 哨兵：该路径不应有任何 HTTP 出网。
-final class _UnreachableBytesHttpClient implements ProviderBytesHttpClient {
-  @override
-  Future<ProviderBytesHttpResponse> postBytes({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) => throw StateError('纯停顿过滤路径不应有 HTTP 出网');
-
-  @override
-  Future<ProviderBytesHttpResponse> getBytes({
-    required Uri uri,
-    required Duration timeout,
-  }) => throw StateError('纯停顿过滤路径不应有 HTTP 出网');
-}

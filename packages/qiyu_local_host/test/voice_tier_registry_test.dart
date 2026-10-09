@@ -160,29 +160,8 @@ void main() {
       expect(httpChunk.session, isNull);
     });
 
-    test('千问档：型号驱动先于地址判定（ADR 0020 补篇优先级逐字保持）', () {
-      // -realtime 型号配 wss 推理地址：仍落 Realtime（型号驱动在前）。
-      expect(
-        resolveSynthesisShape(
-          config(
-            provider: TtsProviderKind.qwenTts,
-            baseUrl: qwenTtsWsInferenceEndpoint,
-            model: '${qwenTtsDefaultModel}x-realtime',
-          ),
-        ).id,
-        'qwen_realtime_ws',
-      );
-      // realtime 型号配现行 multimodal 地址：落 Realtime。
-      expect(
-        resolveSynthesisShape(
-          config(
-            provider: TtsProviderKind.qwenTts,
-            model: 'qwen3-tts-instruct-flash-realtime',
-          ),
-        ).id,
-        'qwen_realtime_ws',
-      );
-      // wss 地址配普通型号：经典 WS 推理（票 07）。
+    test('千问档：ws/wss 地址走 WS 推理，其余走 Maas HTTP', () {
+      // wss 地址：经典 WS 推理。
       expect(
         resolveSynthesisShape(
           config(
@@ -193,8 +172,7 @@ void main() {
         ).id,
         'qwen_ws_inference',
       );
-      // maas 主机与现行 multimodal 地址：都在兜底行（maas 形状在网关内
-      // 按主机判定，分派层不区分）。
+      // HTTP 地址：Maas HTTP 形状。
       expect(
         resolveSynthesisShape(
           config(
@@ -205,39 +183,11 @@ void main() {
             model: qwenTtsDefaultModel,
           ),
         ).id,
-        'qwen_multimodal_http',
-      );
-      expect(
-        resolveSynthesisShape(
-          config(
-            provider: TtsProviderKind.qwenTts,
-            model: qwenTtsDefaultModel,
-          ),
-        ).id,
-        'qwen_multimodal_http',
+        'qwen_maas_http',
       );
     });
 
-    test('realtime 配 wss 推理地址：流式回落行是现行 multimodal 网关', () {
-      // 退化前旧表按地址判型，该组合的句级流式落 WS 推理网关；新表按型
-      // 号驱动落实时形状、流式回落行取现行 multimodal 网关。该组合产品
-      // 链路不可达（realtime 恒先开会话且 D1 下不回落分句），本用例把
-      // 现行为锁死，防将来无意识翻转。
-      final shape = resolveSynthesisShape(
-        TtsConfig(
-          provider: TtsProviderKind.qwenTts,
-          baseUrl: qwenTtsWsInferenceEndpoint,
-          model: '${qwenTtsDefaultModel}x-realtime',
-        ),
-      );
-      expect(shape.id, 'qwen_realtime_ws');
-      expect(
-        shape.stream(TtsGatewayEnv(_UnusedHttpClient(), null)),
-        isA<QwenTtsGateway>(),
-      );
-    });
-
-    test('会话能力矩阵：三个 WS 形状开会话，其余形状返回 null', () {
+    test('会话能力矩阵：两个 WS 形状开会话，其余形状返回 null', () {
       final env = TtsGatewayEnv(_UnusedHttpClient(), null);
       final sessionKinds = <String, Type?>{};
       for (final tier in shipVoiceTiers) {
@@ -252,9 +202,8 @@ void main() {
         'openai_http': isNull,
         'volc_bidirection_ws': VolcBidirectionTtsGateway,
         'volc_http_chunk': isNull,
-        'qwen_realtime_ws': QwenRealtimeTtsGateway,
         'qwen_ws_inference': QwenWsInferenceTtsGateway,
-        'qwen_multimodal_http': isNull,
+        'qwen_maas_http': isNull,
         'custom_http': isNull,
       });
     });
@@ -342,7 +291,6 @@ void main() {
       expect(qwen.modelHelperText, contains(qwenTtsWsInferenceEndpoint));
       expect(qwen.modelHelperText, contains(voiceTierMaasAddressTemplate));
       expect(qwen.modelHelperText, contains('longanhuan_v3.1'));
-      expect(qwen.realtimeModelSuffix, '-realtime');
       expect(qwen.defaultVoice, qwenTtsDefaultVoice);
     });
   });

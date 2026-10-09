@@ -60,7 +60,7 @@ const qwenAsrDefaultEndpoint =
 
 /// 千问语音识别的模型名称缺省值：生产链路经元数据下推，本常量退役为
 /// 内置降级目录的数据行与测试参照（与宿主包侧同名常量同值）。
-const qwenAsrDefaultModel = 'qwen3-asr-flash';
+const qwenAsrDefaultModel = 'qwen-audio-3.1-asr-flash';
 
 /// 内置降级目录（票 08，ADR 0021）：旧版 Host 不下发档位元数据时的最
 /// 小缺省形态。冻结在今天已知的四个档位——可用，但不新增档位知识；新

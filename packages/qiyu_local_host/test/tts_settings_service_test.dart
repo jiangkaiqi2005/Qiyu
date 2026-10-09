@@ -67,15 +67,16 @@ void main() {
   });
 
   test('Key 沿用规则：同地址换协议（换千问档）不沿用旧 Key', () async {
+    const sharedUrl = 'https://tts.shared.com/v1';
     final service = TtsSettingsService(repository, _FakeTtsGateway());
     await service.save(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: sharedUrl,
       model: 'tts-1',
       apiKey: 'secret-tts-key',
     );
 
     final switched = await service.save(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: sharedUrl,
       model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
     );
@@ -85,14 +86,14 @@ void main() {
 
     // 千问档同协议同地址再保存（没传新 Key）仍沿用刚存下的 Key。
     final kept = await service.save(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: sharedUrl,
       model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'qwen-secret-value',
     );
     expect(kept.keySet, isTrue);
     final sameScope = await service.save(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: sharedUrl,
       model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
     );
@@ -100,6 +101,9 @@ void main() {
   });
 
   test('连接测试端到端：千问档经真网关两请求拿到试听音频', () async {
+    const maasUrl =
+        'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+        '/api/v1/services/audio/tts/SpeechSynthesizer';
     final client = _RecordingBytesHttpClient(
       postResponse: ProviderBytesHttpResponse(
         statusCode: 200,
@@ -107,7 +111,7 @@ void main() {
           utf8.encode(
             jsonEncode({
               'output': {
-                'audio': {'url': 'https://oss.example.com/qiyu.mp3'},
+                'audio': {'url': 'https://oss.example.com/qiyu.wav'},
               },
             }),
           ),
@@ -123,11 +127,11 @@ void main() {
     final service = TtsSettingsService(repository, TtsModelGateway(client));
 
     final result = await service.test(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: maasUrl,
       model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'sk-dashscope',
-      voice: 'Cherry',
+      voice: 'longanhuan_v3.1',
     );
 
     expect(result.succeeded, isTrue);
@@ -140,10 +144,13 @@ void main() {
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     expect((body['input']! as Map<String, Object?>)['text'],
         ttsConnectionTestSentence);
-    expect((body['input']! as Map<String, Object?>)['voice'], 'Cherry');
+    expect((body['input']! as Map<String, Object?>)['voice'], 'longanhuan_v3.1');
   });
 
   test('连接测试端到端：千问档下载失败按人话失败，不带音频', () async {
+    const maasUrl =
+        'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+        '/api/v1/services/audio/tts/SpeechSynthesizer';
     final client = _RecordingBytesHttpClient(
       postResponse: ProviderBytesHttpResponse(
         statusCode: 200,
@@ -151,7 +158,7 @@ void main() {
           utf8.encode(
             jsonEncode({
               'output': {
-                'audio': {'url': 'https://oss.example.com/qiyu.mp3'},
+                'audio': {'url': 'https://oss.example.com/qiyu.wav'},
               },
             }),
           ),
@@ -162,7 +169,7 @@ void main() {
     final service = TtsSettingsService(repository, TtsModelGateway(client));
 
     final result = await service.test(
-      baseUrl: qwenTtsDefaultEndpoint,
+      baseUrl: maasUrl,
       model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'sk-dashscope',
@@ -457,19 +464,19 @@ void main() {
     );
     expect(await service.openSession(sessionId: 'chat-1'), isNull);
 
-    // 千问档型号驱动：realtime 型号开会话，其余不开。
+    // 千问档地址驱动：ws/wss 推理地址开会话，maas HTTP 不开。
     await service.save(
-      baseUrl:
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-      model: 'qwen3-tts-flash-realtime',
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'sk-secret-value',
     );
     expect(await service.openSession(sessionId: 'chat-1'), isNotNull);
     await service.save(
       baseUrl:
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-      model: 'qwen3-tts-flash',
+          'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+      model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'sk-secret-value',
     );
@@ -712,7 +719,7 @@ void main() {
     final service = TtsSettingsService(repository, gateway);
     await service.save(
       baseUrl: 'https://tts.example.com/v1',
-      model: 'qwen3-tts-flash',
+      model: 'qwen-audio-3.1-tts-flash',
       apiKey: 'secret-tts-key',
     );
 
@@ -728,7 +735,7 @@ void main() {
             .having(
               (error) => error.message,
               'message',
-              '这个型号要走千问朗读档。',
+              '这个型号要走千问朗读档的新版语音通道。',
             ),
       ),
     );
@@ -994,7 +1001,7 @@ void main() {
       model: 'qwen-audio-3.1-tts-flash',
       provider: TtsProviderKind.qwenTts,
       apiKey: 'sk-bailian',
-      voice: 'longanhuan_v3.6',
+      voice: 'longanhuan_v3.1',
     );
 
     expect(result.succeeded, isTrue);
@@ -1008,7 +1015,7 @@ void main() {
     expect(body['model'], 'qwen-audio-3.1-tts-flash');
     expect(body['input'], {
       'text': ttsConnectionTestSentence,
-      'voice': 'longanhuan_v3.6',
+      'voice': 'longanhuan_v3.1',
       'format': 'wav',
       'sample_rate': 24000,
     });
@@ -1020,7 +1027,7 @@ void main() {
     await service.save(
       baseUrl:
           'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-      model: 'qwen3-tts-flash',
+      model: qwenTtsDefaultModel,
       provider: TtsProviderKind.qwenTts,
       apiKey: 'secret-tts-key',
     );
@@ -1075,7 +1082,7 @@ void main() {
     final service = TtsSettingsService(repository, gateway);
     final result = await service.test(
       baseUrl: 'https://tts.example.com/v1',
-      model: 'qwen3-tts-flash',
+      model: 'qwen-audio-3.1-tts-flash',
       apiKey: 'secret-tts-key',
     );
 
@@ -1084,8 +1091,8 @@ void main() {
     final switchSuggestion =
         result.tierSuggestion! as VoiceTierSwitchSuggestion;
     expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-    expect(switchSuggestion.defaultEndpoint, qwenTtsDefaultEndpoint);
-    expect(result.message, '这个型号要走千问朗读档。');
+    expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
+    expect(result.message, '这个型号要走千问朗读档的新版语音通道。');
   });
 
   test('档位映射表命中：不支持型号直接给原因话术与替代型号，零出网', () async {
@@ -1104,7 +1111,7 @@ void main() {
     final unsupported =
         result.tierSuggestion! as VoiceTierUnsupportedSuggestion;
     expect(unsupported.reason, '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。');
-    expect(unsupported.targetModel, 'qwen3-tts-flash');
+    expect(unsupported.targetModel, 'qwen-audio-3.1-tts-flash');
     expect(result.message, unsupported.reason);
   });
 
@@ -1115,7 +1122,7 @@ void main() {
       provider: TtsProviderKind.qwenTts,
       baseUrl:
           'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-      model: 'qwen3-tts-flash',
+      model: 'custom-tts-model',
       apiKey: 'secret-tts-key',
     );
 
@@ -1172,7 +1179,7 @@ void main() {
     final result = await service.test(
       provider: TtsProviderKind.qwenTts,
       baseUrl: qwenTtsWsInferenceEndpoint,
-      model: 'qwen-audio-3.0-tts-flash',
+      model: 'qwen-audio-3.1-tts-flash',
       apiKey: 'sk-bailian',
     );
 
@@ -1202,10 +1209,10 @@ void main() {
       'task_group': 'audio',
       'task': 'tts',
       'function': 'SpeechSynthesizer',
-      'model': 'qwen-audio-3.0-tts-flash',
+      'model': 'qwen-audio-3.1-tts-flash',
       'parameters': {
         'text_type': 'PlainText',
-        'voice': 'longanhuan_v3.6',
+        'voice': 'longanhuan_v3.1',
         'format': 'wav',
         'sample_rate': 24000,
       },
@@ -1270,7 +1277,7 @@ void main() {
       expect(client.downloadCalled, isFalse);
     });
 
-    test('整段路径（千问 Realtime 档）：纯停顿回复拒绝，WS 连接都不开', () async {
+    test('整段路径（千问 WS 推理档）：纯停顿回复拒绝，WS 连接都不开', () async {
       final connector = _CountingWsConnector();
       final service = TtsSettingsService(
         repository,
@@ -1280,9 +1287,8 @@ void main() {
         ),
       );
       await service.save(
-        baseUrl:
-            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-        model: 'qwen3-tts-flash-realtime',
+        baseUrl: qwenTtsWsInferenceEndpoint,
+        model: qwenTtsDefaultModel,
         provider: TtsProviderKind.qwenTts,
         apiKey: 'sk-secret-value',
       );

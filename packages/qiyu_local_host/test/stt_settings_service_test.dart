@@ -246,13 +246,13 @@ void main() {
     final service = SttSettingsService(repository(), SttModelGateway(http));
     await service.save(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen-audio-3.0-asr-flash-filetrans',
+      model: 'qwen-audio-3.1-asr-flash-filetrans',
       apiKey: 'stt-secret-value',
     );
 
     final tested = await service.test(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen-audio-3.0-asr-flash-filetrans',
+      model: 'qwen-audio-3.1-asr-flash-filetrans',
       apiKey: 'stt-secret-value',
     );
     expect(tested.status, ProviderTestStatus.modelInterfaceMismatch);
@@ -280,7 +280,7 @@ void main() {
   });
 
   test('表 miss 型号挂 400 url error：连接测试照常出网，分类映射与文案一字不变', () async {
-    // 既有分类映射回归：表外型号（qwen3-asr-turbo 不在映射表）走到真实
+    // 既有分类映射回归：表外型号走到真实
     // 上游、400 url error 按 ADR 0015 分类为「模型与接口不匹配」，通用
     // 文案逐字保留——filetrans 用例半段改写后，本条是连接测试路径对该
     // 分类映射的唯一锁定（与朗读侧同构）。
@@ -291,13 +291,13 @@ void main() {
     final service = SttSettingsService(repository(), SttModelGateway(http));
     await service.save(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen3-asr-turbo',
+      model: 'unknown-asr-turbo',
       apiKey: 'stt-secret-value',
     );
 
     final tested = await service.test(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen3-asr-turbo',
+      model: 'unknown-asr-turbo',
       apiKey: 'stt-secret-value',
     );
     expect(http.postCalls, 1, reason: '表 miss 照常出网');
@@ -318,7 +318,7 @@ void main() {
     final service = SttSettingsService(repository(), SttModelGateway(http));
     await service.save(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen3-asr-flash',
+      model: 'qwen-audio-3.1-asr-flash',
       apiKey: 'stt-secret-value',
     );
 
@@ -351,7 +351,7 @@ void main() {
     final service = SttSettingsService(repository(), SttModelGateway(http));
     await service.save(
       baseUrl: 'https://stt.example.com/v1',
-      model: 'qwen3-asr-turbo',
+      model: 'unlisted-audio-model',
       apiKey: 'stt-secret-value',
     );
 
@@ -735,7 +735,7 @@ void main() {
     final result = await service.test(
       baseUrl: 'https://stt.example.com/v1',
       // 大小写与首尾空白按表查询的归一口径命中。
-      model: ' QWEN3-ASR-Flash ',
+      model: ' QWEN-AUDIO-3.1-ASR-FLASH ',
       apiKey: 'stt-test-key',
     );
 
@@ -748,7 +748,7 @@ void main() {
     final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
     expect(switchSuggestion.targetFamily, VoiceServiceFamily.transcription);
     expect(switchSuggestion.targetProviderWireName, 'qwen_asr');
-    expect(switchSuggestion.targetModel, 'qwen3-asr-flash');
+    expect(switchSuggestion.targetModel, 'qwen-audio-3.1-asr-flash');
     // 缺省地址与型号可代填（现行形状条目）。
     expect(switchSuggestion.defaultEndpoint, qwenAsrDefaultEndpoint);
     // 建议 wire 形状与票 03 朗读侧同款（同一下发通道、同一字段集）。
@@ -756,7 +756,7 @@ void main() {
       'kind': 'switchTier',
       'targetFamily': 'transcription',
       'targetProvider': 'qwen_asr',
-      'targetModel': 'qwen3-asr-flash',
+      'targetModel': 'qwen-audio-3.1-asr-flash',
       'reason': '这个型号要走千问识别档。',
       'defaultEndpoint': qwenAsrDefaultEndpoint,
     });
@@ -777,7 +777,7 @@ void main() {
     final result = await service.test(
       provider: SttProviderKind.volcSeedAsr,
       baseUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
-      model: 'qwen3-asr-flash',
+      model: 'qwen-audio-3.1-asr-flash',
       apiKey: 'ark-test-key',
     );
 
@@ -813,7 +813,7 @@ void main() {
     expect(unsupported.targetFamily, VoiceServiceFamily.transcription);
     // 替代型号落位就在当前档：界面侧据此按同档回填（只改型号、Key 保留）。
     expect(unsupported.targetProviderWireName, 'qwen_asr');
-    expect(unsupported.targetModel, 'qwen3-asr-flash');
+    expect(unsupported.targetModel, 'qwen-audio-3.1-asr-flash');
     expect(unsupported.defaultEndpoint, qwenAsrDefaultEndpoint);
 
     // 映射表只给建议不拦保存：不支持的型号照样存得进（用户故事 8）。
@@ -841,7 +841,7 @@ void main() {
     expect(miss.tierSuggestion, isNull);
     expect(http.postCalls, 1);
 
-    // 千问识别档配 qwen3-asr-flash：正确落位同样不干预、照常出网。
+    // 千问识别档配 qwen-audio-3.1-asr-flash：正确落位同样不干预、照常出网。
     final qwenHttp = _StaticSttHttpClient(
       jsonEncode({
         'output': {

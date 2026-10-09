@@ -185,7 +185,7 @@ final class TtsSettingsForm
   /// 优先于地址判定；其余档无实时形态规则，照常消费高级参数）。该形
   /// 态网关不吃 extraParams（写了不报错也不生效），设置页据此禁用高级
   /// 参数输入并就地提示，不再静默吞掉用户填写的内容。
-  bool get isQwenRealtimeTier {
+  bool get isRealtimeModelTier {
     final suffix = tier.realtimeModelSuffix;
     return suffix != null &&
         modelController.text.trim().toLowerCase().endsWith(suffix);
@@ -895,12 +895,12 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                           // 不报错也不生效）：就地禁用并如实提示，不再静默
                           // 吞掉填写内容。禁用只挡编辑，已填草稿原样保留；
                           // 切回普通型号或其他档即恢复。
-                          enabled: !_form.isQwenRealtimeTier,
+                          enabled: !_form.isRealtimeModelTier,
                           decoration: InputDecoration(
                             labelText: settingsText(context, '自定义扩展参数 (JSON)', 'Custom parameters (JSON)'),
                             hintText:
                                 '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
-                            helperText: _form.isQwenRealtimeTier
+                            helperText: _form.isRealtimeModelTier
                                 ? (current.realtimeExtraParamsHint == null ? null : settingsCatalogLabel(context, current.realtimeExtraParamsHint!))
                                 : null,
                             contentPadding: const EdgeInsets.all(16),

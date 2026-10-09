@@ -50,14 +50,14 @@
 
 - **OpenAI-compatible**（Whisper 等语音识别服务）
 - **豆包火山 Seed ASR**（实时流式识别）
-- **千问语音识别**（阿里云百炼 DashScope，默认模型 `qwen3-asr-flash`，还目前还不支持新的`qwen-audio-3.0-asr-flash-filetrans`）
+- **千问语音识别**（阿里云百炼 DashScope，默认模型 `qwen-audio-3.1-asr-flash`，目前还不支持录音文件转写型号 `qwen-audio-3.1-asr-flash-filetrans`）
 - **自定义服务**（填入任意兼容端点，自定义鉴权与响应解析）
 
 语音朗读目前支持：
 
 - **OpenAI-compatible**（OpenAI TTS、硅基流动等）
 - **豆包火山 seed-tts-2.0**（内置方言音色预设，可调语速）
-- **千问语音合成**（阿里云百炼 DashScope，默认模型 `qwen3-tts-flash`，音色自由填写，目前还不支持新的`qwen-audio-3.1-tts-next`）
+- **千问语音合成**（阿里云百炼 DashScope，默认模型 `qwen-audio-3.1-tts-flash`，音色自由填写，目前还不支持统一音频生成型号 `qwen-audio-3.1-tts-next`）
 - **自定义服务**（填入任意兼容端点，支持原始字节、JSON 字段或逐行 JSON 三种响应形态）
 
 千问语音具体能填哪些型号、地址怎么填，见[语音型号支持清单](docs/product/voice-models.md)。

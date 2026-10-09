@@ -132,8 +132,7 @@ TtsGatewayException _qwenInferenceTaskFailedFailure(Map<String, Object?> event) 
 /// PCM 后在 Host 包一次 WAV 头，流式路径按既有 PCM 块通道交付。
 ///
 /// 3.1（qwen-audio-3.1-tts-flash 等）在 CosyVoice 引擎层只认 3.1 专属
-/// 音色（如 longanhuan_v3.1，3.0 音色会报 Engine error 411），音色
-/// 空缺时按型号自动回落为 [qwenTts31DefaultVoice]。
+/// 音色（如 longanhuan_v3.1），音色空缺时自动回落为 [qwenTtsDefaultVoice]。
 final class QwenWsInferenceTtsGateway
     implements
         TtsSynthesisGateway,
@@ -143,8 +142,8 @@ final class QwenWsInferenceTtsGateway
 
   final ProviderWebSocketConnector connector;
 
-  /// 空闲超时预算：含建连、握手、音频间隔与收尾等待（与豆包/千问
-  /// Realtime 网关同律，测试用小值验证超时降级）。
+  /// 空闲超时预算：含建连、握手、音频间隔与收尾等待（与豆包
+  /// 网关同律，测试用小值验证超时降级）。
   final Duration timeout;
 
   /// 推理地址：用户填的完整 ws/wss 端点，host/port/path/query 原样
@@ -158,9 +157,9 @@ final class QwenWsInferenceTtsGateway
   }
 
   /// run-task 的 payload（官方文档逐字段，probe 02 实测）：task_group/
-  /// task/function 固定，音色空缺按型号回落本家族官方示例音色（3.1 专属
-  /// 音色 vs 3.0 音色），format/sample_rate 缺省 wav/24000（与票 02 maas
-  /// 形状同律）；高级参数深合并进 parameters——用户显式写的字段覆盖缺省。
+  /// task/function 固定，音色空缺回落官方示例音色（3.1 专属音色），
+  /// format/sample_rate 缺省 wav/24000；高级参数深合并进 parameters
+  /// ——用户显式写的字段覆盖缺省。
   static Map<String, Object?> runTaskPayload(TtsConfig config) {
     final voice = config.voice?.trim();
     final fallbackVoice = qwenTtsDefaultVoiceForModel(config.model);

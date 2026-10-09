@@ -144,62 +144,8 @@ void main() {
     });
   });
 
-  group('千问流式合成', () {
-    const config = TtsConfig(
-      provider: TtsProviderKind.qwenTts,
-      baseUrl:
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-      model: 'qwen3-tts-flash',
-    );
-
-    test('SSE 开关入头，中间块 base64 音频段按序转出', () async {
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          [
-            'id:1',
-            'event:result',
-            jsonEncode({
-              'output': {
-                'audio': {'data': base64Encode([1, 2]), 'finish_reason': null},
-              },
-            }),
-            '',
-            jsonEncode({
-              'output': {
-                'audio': {'data': base64Encode([3]), 'finish_reason': null},
-              },
-            }),
-            '',
-            // 收束块：data 空串 + 完整音频 URL + finish_reason=stop。
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': '',
-                  'url': 'https://example.invalid/audio.wav',
-                  'finish_reason': 'stop',
-                },
-              },
-            }),
-          ].join('\n'),
-        ),
-      );
-
-      final chunks = await TtsModelGateway(client)
-          .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-          .toList();
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [1, 2],
-        [3],
-      ]);
-      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
-      // 官方流式开关是请求头。
-      expect(client.headers['X-DashScope-SSE'], 'enable');
-      expect(client.headers['authorization'], 'Bearer sk-test');
-    });
-
-    test('带 LIST 扩展块的 WAV 段按块遍历剥头（不按固定 44 字节）', () async {
-      // fmt 块前面插一个 LIST 块：data 不在固定偏移 44，固定剥会剥错。
+  group('qwenTtsNormalizeWavChunk WAV 段解析与剥头', () {
+    test('带 LIST 扩展块的 WAV 段按块遍历剥头（不按固定 44 字节）', () {
       final wav = BytesBuilder(copy: false);
       void tag(String value) => wav.add(ascii.encode(value));
       void u32(int value) => wav.add([
@@ -216,7 +162,7 @@ void main() {
       }
 
       tag('RIFF');
-      u32(0xffffffff); // 流式分块：总长未知，占位
+      u32(0xffffffff);
       tag('WAVE');
       chunk('fmt ', [
         1, 0, // PCM
@@ -228,34 +174,10 @@ void main() {
       ]);
       chunk('LIST', ascii.encode('INFOhello'));
       chunk('data', [1, 2, 3, 4]);
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          [
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': base64Encode(wav.takeBytes()),
-                  'finish_reason': null,
-                },
-              },
-            }),
-            jsonEncode({
-              'output': {
-                'audio': {'data': '', 'finish_reason': 'stop'},
-              },
-            }),
-          ].join('\n'),
-        ),
-      );
 
-      final chunks = await TtsModelGateway(client)
-          .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-          .toList();
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [1, 2, 3, 4],
-      ]);
-      expect(chunks.single.sampleRate, 16000);
+      final result = qwenTtsNormalizeWavChunk(wav.takeBytes());
+      expect(result.pcm, [1, 2, 3, 4]);
+      expect(result.sampleRate, 16000);
     });
 
     test('data 声明长度超过实际 body：截断按实际到达的字节转出', () async {
@@ -288,39 +210,12 @@ void main() {
       ]);
       // data 声明 100 字节、实际只到 4 字节：以实际到达为准。
       chunk('data', [1, 2, 3, 4], declared: 100);
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          [
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': base64Encode(wav.takeBytes()),
-                  'finish_reason': null,
-                },
-              },
-            }),
-            jsonEncode({
-              'output': {
-                'audio': {'data': '', 'finish_reason': 'stop'},
-              },
-            }),
-          ].join('\n'),
-        ),
-      );
-
-      final chunks = await TtsModelGateway(client)
-          .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-          .toList();
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [1, 2, 3, 4],
-      ]);
-      expect(chunks.single.sampleRate, 16000);
+      final result = qwenTtsNormalizeWavChunk(wav.takeBytes());
+      expect(result.pcm, [1, 2, 3, 4]);
+      expect(result.sampleRate, 16000);
     });
 
-    test('只有容器头没有 data 的片段：采样率沿用到后续裸 PCM 块', () async {
-      // 首个 SSE 段只带 RIFF/fmt（没有 data）：协商采样率已随片段到达，
-      // 丢了它整路流的标注就错；真正的样本在后续裸块里。
+    test('只有容器头没有 data 的片段：返回空 pcm 并带回采样率', () {
       final wav = BytesBuilder(copy: false);
       void tag(String value) => wav.add(ascii.encode(value));
       void u32(int value) => wav.add([
@@ -333,128 +228,41 @@ void main() {
         tag(id);
         u32(body.length);
         wav.add(body);
-        if (body.length.isOdd) wav.add([0]); // 2 字节对齐填充
+        if (body.length.isOdd) wav.add([0]);
       }
 
       tag('RIFF');
-      u32(0xffffffff); // 流式分块：总长未知，占位
+      u32(0xffffffff);
       tag('WAVE');
       chunk('fmt ', [
-        1, 0, // PCM
-        1, 0, // 单声道
-        0x80, 0x3e, 0, 0, // 16000 Hz
-        0, 0x7d, 0, 0, // 字节率
-        2, 0, // blockAlign
-        16, 0, // 位深
+        1, 0,
+        1, 0,
+        0x80, 0x3e, 0, 0,
+        0, 0x7d, 0, 0,
+        2, 0,
+        16, 0,
       ]);
-      final headerOnly = wav.takeBytes();
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          [
-            // 容器头片段：没有 data，只把采样率带回来。
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': base64Encode(headerOnly),
-                  'finish_reason': null,
-                },
-              },
-            }),
-            // 后续裸 PCM 块：沿用头片段的采样率标注。
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': base64Encode([5, 6]),
-                  'finish_reason': null,
-                },
-              },
-            }),
-            jsonEncode({
-              'output': {
-                'audio': {'data': '', 'finish_reason': 'stop'},
-              },
-            }),
-          ].join('\n'),
-        ),
-      );
 
-      final chunks = await TtsModelGateway(client)
-          .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-          .toList();
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [5, 6],
-      ]);
-      expect(chunks.single.sampleRate, 16000);
+      final result = qwenTtsNormalizeWavChunk(wav.takeBytes());
+      expect(result.pcm, isEmpty);
+      expect(result.sampleRate, 16000);
     });
 
-    test('没见到 finish_reason=stop 的断流按音频不完整拒绝', () async {
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          jsonEncode({
-            'output': {
-              'audio': {'data': base64Encode([1]), 'finish_reason': null},
-            },
-          }),
-        ),
-      );
-
-      await expectLater(
-        TtsModelGateway(client)
-            .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-            .toList(),
-        throwsA(
-          isA<TtsGatewayException>().having(
-            (error) => error.message,
-            'message',
-            '语音合成服务返回的音频不完整。',
-          ),
-        ),
-      );
-    });
-
-    test('带 WAV 头的音频段剥掉容器头只送裸 PCM，采样率读回头里', () async {
-      // 官方文档未载明 SSE 中间块的音频格式（唯一线索是完整音频 URL
-      // 为 .wav）：块带 RIFF 头时按块遍历定位 fmt /data 剥容器，采样率
-      // 读回头里的值。
+    test('普通 WAV 头剥掉容器头只送裸 PCM，采样率读回头里', () {
       final wav = wrapPcmAsWav(
         Uint8List.fromList(const [1, 2, 3, 4]),
         sampleRate: 16000,
       );
-      final client = _RecordingBytesHttpClient(
-        response: textResponse(
-          [
-            jsonEncode({
-              'output': {
-                'audio': {'data': base64Encode(wav), 'finish_reason': null},
-              },
-            }),
-            jsonEncode({
-              'output': {
-                'audio': {'data': base64Encode([5]), 'finish_reason': null},
-              },
-            }),
-            jsonEncode({
-              'output': {
-                'audio': {
-                  'data': '',
-                  'finish_reason': 'stop',
-                },
-              },
-            }),
-          ].join('\n'),
-        ),
-      );
+      final result = qwenTtsNormalizeWavChunk(wav);
+      expect(result.pcm, [1, 2, 3, 4]);
+      expect(result.sampleRate, 16000);
+    });
 
-      final chunks = await TtsModelGateway(client)
-          .synthesizeStream(config: config, apiKey: 'sk-test', text: '晚安。')
-          .toList();
-
-      expect(chunks.map((chunk) => chunk.bytes), [
-        [1, 2, 3, 4],
-        [5],
-      ]);
-      expect(chunks.map((chunk) => chunk.sampleRate), [16000, 16000]);
+    test('非 WAV 裸 PCM 字节原样返回', () {
+      final raw = Uint8List.fromList([1, 2, 3, 4]);
+      final result = qwenTtsNormalizeWavChunk(raw);
+      expect(result.pcm, [1, 2, 3, 4]);
+      expect(result.sampleRate, isNull);
     });
   });
 

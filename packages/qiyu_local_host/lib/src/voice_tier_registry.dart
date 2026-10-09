@@ -22,7 +22,6 @@ import 'custom_tts_gateway.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
-import 'qwen_realtime_tts_gateway.dart';
 import 'qwen_tts_gateway.dart';
 import 'qwen_ws_inference_tts_gateway.dart';
 import 'tts_gateway.dart';
@@ -71,8 +70,6 @@ final class TtsGatewayEnv {
 
   late final VolcBidirectionTtsGateway volcBidirection =
       VolcBidirectionTtsGateway(webSocketConnector, httpClient);
-  late final QwenRealtimeTtsGateway qwenRealtime =
-      QwenRealtimeTtsGateway(webSocketConnector);
   late final QwenWsInferenceTtsGateway qwenWsInference =
       QwenWsInferenceTtsGateway(webSocketConnector);
 }
@@ -309,11 +306,9 @@ const _sttResponseShapeOptions = <VoiceTierOption>[
 /// WS 推理端点与 maas 模板同源，spec 决策 9 聚合站域名不入代码），随
 /// 元数据下推——设置页不再自备这段双源文案。
 final qwenTtsModelHelperText =
-    '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
-    '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
-    '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
+    '千问 3.1 语音合成型号（如 $qwenTtsDefaultModel）：'
     '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式，'
-    '3.1 推荐音色如 longanhuan_v3.1）；'
+    '默认音色 $qwenTtsDefaultVoice）；'
     '也可填官方 maas HTTP 端点 $voiceTierMaasAddressTemplate，'
     '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
     '（栖语不代填，按句等整段返回）；型号支持范围见'
@@ -321,7 +316,7 @@ final qwenTtsModelHelperText =
 
 /// 千问识别档的模型支持范围说明：从宿主常量现场拼装。
 final qwenAsrModelHelperText =
-    '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel 与 qwen-audio-3.1-asr-flash';
+    '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel';
 
 /// 随船档位目录：当前全部四个合成档与三个转写档。**新档位发版＝在本
 /// 列表加数据行**（复用既有请求形状时无需其他代码改动）。
@@ -436,26 +431,9 @@ final List<VoiceTierDescriptor> shipVoiceTiers = [
     voiceMode: VoiceTierVoiceMode.freeInput,
     defaultVoice: qwenTtsDefaultVoice,
     voiceHint: qwenTtsDefaultVoice,
-    realtimeModelSuffix: '-realtime',
-    realtimeExtraParamsHint: '该档不支持自定义高级参数',
     synthesisShapes: [
-      // 千问档形状分派按 ADR 0020 补篇的优先级落序：型号驱动（-realtime，
-      // ADR 0018）→ 地址 scheme 为 ws/wss（经典 WS 推理，票 07）→ 兜底
-      // 现行 multimodal（maas 形状在 QwenTtsGateway 内按主机判定）。三张
-      // 分派表共用这份行集。实时形状没有句级流式通道：会话开不了时整轮
-      // 不开语音（D1 口径），流式回落行只是形状解析的保底——现行
-      // multimodal 网关。与退化前旧表的唯一落点差在「realtime 型号配
-      // wss 推理地址」组合：旧表按地址判型落 WS 推理网关，新表按型号
-      // 驱动落实时形状、句级流式随之走现行 multimodal。该组合产品链路
-      // 不可达（realtime 恒先开会话且 D1 下不回落分句），落点差没有行为
-      // 后果，现行为由档位归口测试锁死。
-      TtsTierShape(
-        id: 'qwen_realtime_ws',
-        matches: (config) => isQwenRealtimeTtsModel(config.model),
-        whole: (env) => env.qwenRealtime,
-        stream: (env) => QwenTtsGateway(env.httpClient),
-        session: (env) => env.qwenRealtime,
-      ),
+      // 千问 3.1 档形状分派：地址 scheme 为 ws/wss 走经典 WS 推理通道；
+      // 其余走官方 maas HTTP SpeechSynthesizer 通道。
       TtsTierShape(
         id: 'qwen_ws_inference',
         matches: (config) => qwenTtsUsesWsInference(config.baseUrl),
@@ -464,7 +442,7 @@ final List<VoiceTierDescriptor> shipVoiceTiers = [
         session: (env) => env.qwenWsInference,
       ),
       TtsTierShape(
-        id: 'qwen_multimodal_http',
+        id: 'qwen_maas_http',
         matches: (_) => true,
         whole: (env) => QwenTtsGateway(env.httpClient),
         stream: (env) => QwenTtsGateway(env.httpClient),

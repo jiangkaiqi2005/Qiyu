@@ -54,7 +54,6 @@ export 'src/proxy_settings_service.dart';
 export 'src/hidden_action_executor.dart';
 export 'src/qwen_asr_gateway.dart';
 export 'src/qwen_omni_realtime_gateway.dart';
-export 'src/qwen_realtime_tts_gateway.dart';
 export 'src/qwen_tts_gateway.dart';
 export 'src/qwen_ws_inference_tts_gateway.dart';
 export 'src/relationship_lifecycle.dart';

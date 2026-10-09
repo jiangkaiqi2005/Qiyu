@@ -4,8 +4,7 @@
 ///
 /// 边界（ADR 0020 映射表边界节）：新模型发版＝在本文件加数据行随版本
 /// 发布；不做运行时拉取（表决定端点与档位，表被篡改即请求与密钥外泄）、
-/// 不做用户自填、名字推断只保留型号驱动的 `-realtime` 后缀规则
-/// （`isQwenRealtimeTtsModel`），不按名字猜协议。豆包型号暂不收。
+/// 不做用户自填，不按名字猜协议。豆包型号暂不收。
 ///
 /// 单一真相：表与查询只在本包；浏览器侧只消费连接测试结果里的结构化
 /// 建议字段，不复制表（spec 决策 11）。
@@ -175,45 +174,25 @@ const unsupportedVoiceModelRows = <({String model, String reason, String replace
   (
     model: 'qwen-audio-3.1-tts-next',
     reason: '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。',
-    replacement: 'qwen3-tts-flash',
+    replacement: 'qwen-audio-3.1-tts-flash',
   ),
   // 端到端语音对话：会绕开人格 prompt 管线，与行为红线冲突。
   (
     model: 'qwen-audio-3.1-realtime-plus',
     reason: '这个型号是端到端语音对话型号，不归转写或朗读用，栖语接不了它。',
-    replacement: 'qwen3-tts-flash',
+    replacement: 'qwen-audio-3.1-tts-flash',
   ),
   // 流式输入型识别：需要边说边传的 WS 转写管线，现有整段录音链路接不了。
   (
     model: 'qwen-audio-3.1-asr-flash-message',
     reason: '这个型号要边说边传的流式识别通道，栖语暂不支持。',
-    replacement: 'qwen3-asr-flash',
-  ),
-  (
-    model: 'qwen-audio-3.0-asr-flash-streaming',
-    reason: '这个型号要边说边传的流式识别通道，栖语暂不支持。',
-    replacement: 'qwen3-asr-flash',
-  ),
-  (
-    model: 'qwen3-asr-flash-realtime',
-    reason: '这个型号要边说边传的流式识别通道，栖语暂不支持。',
-    replacement: 'qwen3-asr-flash',
+    replacement: 'qwen-audio-3.1-asr-flash',
   ),
   // 异步文件转写：上传通道缺失，ADR 0015 已裁定不做。
   (
     model: 'qwen-audio-3.1-asr-flash-filetrans',
     reason: '这是录音文件转写型号，栖语不支持。',
-    replacement: 'qwen3-asr-flash',
-  ),
-  (
-    model: 'qwen-audio-3.0-asr-flash-filetrans',
-    reason: '这是录音文件转写型号，栖语不支持。',
-    replacement: 'qwen3-asr-flash',
-  ),
-  (
-    model: 'qwen3-asr-flash-filetrans',
-    reason: '这是录音文件转写型号，栖语不支持。',
-    replacement: 'qwen3-asr-flash',
+    replacement: 'qwen-audio-3.1-asr-flash',
   ),
 ];
 
@@ -240,34 +219,10 @@ VoiceTierUnsupportedSuggestion _unsupportedSuggestion(
   );
 }
 
-/// 千问语音现行形状条目：走 DashScope multimodal 端点，缺省端点可代填。
-/// 型号名以官方文档与 probe 实测为准（qwen-tts / qwen-tts-realtime /
-/// qwen3-asr 官方页，2026-09-24 核对；qwen3-tts-flash 另有 probe 01
-/// 200 基线），不凭空造型号名。
+/// 千问语音支持条目：3.1 语音合成与识别型号。
 const List<_SupportedVoiceModel> _supportedVoiceModels = [
-  // 朗读族：qwen3 现行合成型号（HTTP SSE；-realtime 系在档内由型号驱动
-  // 分派到 WS，映射表只在跨档时给建议）。
-  _SupportedVoiceModel(
-    'qwen3-tts-flash',
-    VoiceServiceFamily.synthesis,
-    'qwen_tts',
-    defaultEndpoint: qwenTtsDefaultEndpoint,
-  ),
-  _SupportedVoiceModel(
-    'qwen3-tts-flash-realtime',
-    VoiceServiceFamily.synthesis,
-    'qwen_tts',
-    defaultEndpoint: qwenTtsDefaultEndpoint,
-  ),
-  _SupportedVoiceModel(
-    'qwen3-tts-instruct-flash-realtime',
-    VoiceServiceFamily.synthesis,
-    'qwen_tts',
-    defaultEndpoint: qwenTtsDefaultEndpoint,
-  ),
-  // 朗读族：Qwen-Audio-TTS 家族（3.0 与 3.1），走千问朗读档的新版语音
-  // 通道（票 07）：缺省端点为官方 WS 推理地址（probe 02/03 实测全链路
-  // 成功，可代填）；现行地址调不通它们（probe 1.3 实测 400 url error）。
+  // 朗读族：Qwen-Audio-3.1-TTS 家族，走千问朗读档的 WS 推理通道
+  // （缺省端点为官方 WS 推理地址，可代填）。
   _SupportedVoiceModel(
     'qwen-audio-3.1-tts-flash',
     VoiceServiceFamily.synthesis,
@@ -275,28 +230,7 @@ const List<_SupportedVoiceModel> _supportedVoiceModels = [
     defaultEndpoint: qwenTtsWsInferenceEndpoint,
     usesNewVersionEndpoint: true,
   ),
-  _SupportedVoiceModel(
-    'qwen-audio-3.0-tts-flash',
-    VoiceServiceFamily.synthesis,
-    'qwen_tts',
-    defaultEndpoint: qwenTtsWsInferenceEndpoint,
-    usesNewVersionEndpoint: true,
-  ),
-  _SupportedVoiceModel(
-    'qwen-audio-3.0-tts-plus',
-    VoiceServiceFamily.synthesis,
-    'qwen_tts',
-    defaultEndpoint: qwenTtsWsInferenceEndpoint,
-    usesNewVersionEndpoint: true,
-  ),
-  // 转写族：qwen3 现行识别型号与 3.1 识别型号（识别档网关按地址路径派形状，
-  // 缺省端点可代填；引导接线在票 04）。
-  _SupportedVoiceModel(
-    'qwen3-asr-flash',
-    VoiceServiceFamily.transcription,
-    'qwen_asr',
-    defaultEndpoint: qwenAsrDefaultEndpoint,
-  ),
+  // 转写族：3.1 识别型号（识别档网关按原生多模态形状上送，缺省端点可代填）。
   _SupportedVoiceModel(
     'qwen-audio-3.1-asr-flash',
     VoiceServiceFamily.transcription,

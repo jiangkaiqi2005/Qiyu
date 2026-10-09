@@ -6,140 +6,75 @@ import 'package:test/test.dart';
 /// 型号名归一（去空白、小写、精确匹配）与未知回退。表条目的话术与缺省值
 /// 逐字锁死：改表必须同票改测试（用户故事 26）。
 void main() {
-  group('朗读族：现行形状型号引导换档', () {
-    // 三个非千问朗读档都会命中同一条建议；千问朗读档本身不干预（下方
-    // 单独锁定）。
-    for (final tier in ['openai_compatible', 'volc_tts', 'custom']) {
-      test('openai_compatible 之外的 $tier 填 qwen3-tts-flash 被引导去千问朗读档', () {
-        final suggestion = lookupVoiceTierSuggestion(
-          family: VoiceServiceFamily.synthesis,
-          currentProviderWireName: tier,
-          model: 'qwen3-tts-flash',
-        );
-        expect(suggestion, isA<VoiceTierSwitchSuggestion>());
-        final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
-        expect(switchSuggestion.targetFamily, VoiceServiceFamily.synthesis);
-        expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-        expect(switchSuggestion.targetModel, 'qwen3-tts-flash');
-        expect(switchSuggestion.defaultEndpoint, qwenTtsDefaultEndpoint);
-        expect(switchSuggestion.addressTemplate, isNull);
-        expect(switchSuggestion.addressGuidance, isNull);
-        expect(switchSuggestion.reason, '这个型号要走千问朗读档。');
-      });
-    }
+  group('朗读族：3.1 新版语音通道型号引导换档（推理地址可代填，票 07）', () {
+    const model = 'qwen-audio-3.1-tts-flash';
 
-    test('realtime 系两个型号同样引导去千问朗读档（型号驱动在档内生效）', () {
-      for (final model in [
-        'qwen3-tts-flash-realtime',
-        'qwen3-tts-instruct-flash-realtime',
-      ]) {
-        final suggestion = lookupVoiceTierSuggestion(
-          family: VoiceServiceFamily.synthesis,
-          currentProviderWireName: 'openai_compatible',
-          model: model,
-        );
-        expect(suggestion, isA<VoiceTierSwitchSuggestion>(), reason: model);
-        final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
-        expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-        expect(switchSuggestion.targetModel, model);
-        expect(switchSuggestion.defaultEndpoint, qwenTtsDefaultEndpoint);
-        expect(switchSuggestion.reason, '这个型号要走千问朗读档。');
-      }
+    test('$model 在千问朗读档填非 WS/Maas 地址：引导换新版语音通道（同档）', () {
+      final suggestion = lookupVoiceTierSuggestion(
+        family: VoiceServiceFamily.synthesis,
+        currentProviderWireName: 'qwen_tts',
+        model: model,
+      );
+      expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+      final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
+      expect(switchSuggestion.targetFamily, VoiceServiceFamily.synthesis);
+      expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
+      expect(switchSuggestion.targetModel, model);
+      // 官方 WS 推理地址实测全链路成功（probe 02/03）：缺省端点直接
+      // 代填；maas 模板与拼接指引留作备选信息。
+      expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
+      expect(
+        switchSuggestion.addressTemplate,
+        'https://{业务空间ID}.cn-beijing.maas.aliyuncs.com'
+        '/api/v1/services/audio/tts/SpeechSynthesizer',
+      );
+      expect(switchSuggestion.addressGuidance, contains('业务空间 ID'));
+      expect(
+        switchSuggestion.reason,
+        '这个型号要走千问朗读档的新版语音通道。',
+      );
     });
 
-    test('千问朗读档填现行型号：正确落位，不干预', () {
+    test('$model 在其他档同样给推理地址与备选模板', () {
+      final suggestion = lookupVoiceTierSuggestion(
+        family: VoiceServiceFamily.synthesis,
+        currentProviderWireName: 'openai_compatible',
+        model: model,
+      );
+      expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+      final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
+      expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
+      expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
+      expect(switchSuggestion.addressTemplate, isNotNull);
+      expect(
+        switchSuggestion.reason,
+        '这个型号要走千问朗读档的新版语音通道。',
+      );
+    });
+
+    test('$model 在千问朗读档配 maas 地址：正确落位，不干预', () {
       expect(
         lookupVoiceTierSuggestion(
           family: VoiceServiceFamily.synthesis,
           currentProviderWireName: 'qwen_tts',
-          model: 'qwen3-tts-flash',
-        ),
-        isNull,
-      );
-      expect(
-        lookupVoiceTierSuggestion(
-          family: VoiceServiceFamily.synthesis,
-          currentProviderWireName: 'qwen_tts',
-          model: 'qwen3-tts-flash-realtime',
+          model: model,
+          currentAddressUsesMaasShape: true,
         ),
         isNull,
       );
     });
-  });
 
-  group('朗读族：3.1／3.0 新版语音通道型号引导换档（推理地址可代填，票 07）', () {
-    for (final model in [
-      'qwen-audio-3.1-tts-flash',
-      'qwen-audio-3.0-tts-flash',
-      'qwen-audio-3.0-tts-plus',
-    ]) {
-      test('$model 在千问朗读档填现行地址：引导换新版语音通道（同档）', () {
-        final suggestion = lookupVoiceTierSuggestion(
+    test('$model 在千问朗读档配 wss 推理地址：正确落位，不干预', () {
+      expect(
+        lookupVoiceTierSuggestion(
           family: VoiceServiceFamily.synthesis,
           currentProviderWireName: 'qwen_tts',
           model: model,
-        );
-        expect(suggestion, isA<VoiceTierSwitchSuggestion>(), reason: model);
-        final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
-        expect(switchSuggestion.targetFamily, VoiceServiceFamily.synthesis);
-        expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-        expect(switchSuggestion.targetModel, model);
-        // 官方 WS 推理地址实测全链路成功（probe 02/03）：缺省端点直接
-        // 代填；maas 模板与拼接指引留作备选信息。
-        expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
-        expect(
-          switchSuggestion.addressTemplate,
-          'https://{业务空间ID}.cn-beijing.maas.aliyuncs.com'
-          '/api/v1/services/audio/tts/SpeechSynthesizer',
-        );
-        expect(switchSuggestion.addressGuidance, contains('业务空间 ID'));
-        expect(
-          switchSuggestion.reason,
-          '这个型号要走千问朗读档的新版语音通道。',
-        );
-      });
-
-      test('$model 在其他档同样给推理地址与备选模板', () {
-        final suggestion = lookupVoiceTierSuggestion(
-          family: VoiceServiceFamily.synthesis,
-          currentProviderWireName: 'openai_compatible',
-          model: model,
-        );
-        expect(suggestion, isA<VoiceTierSwitchSuggestion>(), reason: model);
-        final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
-        expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-        expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
-        expect(switchSuggestion.addressTemplate, isNotNull);
-        expect(
-          switchSuggestion.reason,
-          '这个型号要走千问朗读档的新版语音通道。',
-        );
-      });
-
-      test('$model 在千问朗读档配 maas 地址：正确落位，不干预', () {
-        expect(
-          lookupVoiceTierSuggestion(
-            family: VoiceServiceFamily.synthesis,
-            currentProviderWireName: 'qwen_tts',
-            model: model,
-            currentAddressUsesMaasShape: true,
-          ),
-          isNull,
-        );
-      });
-
-      test('$model 在千问朗读档配 wss 推理地址：正确落位，不干预', () {
-        expect(
-          lookupVoiceTierSuggestion(
-            family: VoiceServiceFamily.synthesis,
-            currentProviderWireName: 'qwen_tts',
-            model: model,
-            currentAddressUsesWsInference: true,
-          ),
-          isNull,
-        );
-      });
-    }
+          currentAddressUsesWsInference: true,
+        ),
+        isNull,
+      );
+    });
 
     test('结构完整性：新版端点条目的缺省端点一律是官方推理地址（遍历行集）', () {
       final newVersionRows = supportedVoiceModelRows
@@ -177,13 +112,13 @@ void main() {
           // 端点随替代型号自己的支持条目走。
           expect(
             unsupported.targetProviderWireName,
-            row.replacement == 'qwen3-tts-flash' ? 'qwen_tts' : 'qwen_asr',
+            row.replacement == 'qwen-audio-3.1-tts-flash' ? 'qwen_tts' : 'qwen_asr',
             reason: row.model,
           );
           expect(
             unsupported.defaultEndpoint,
-            row.replacement == 'qwen3-tts-flash'
-                ? qwenTtsDefaultEndpoint
+            row.replacement == 'qwen-audio-3.1-tts-flash'
+                ? qwenTtsWsInferenceEndpoint
                 : qwenAsrDefaultEndpoint,
             reason: row.model,
           );
@@ -205,6 +140,8 @@ void main() {
             family: suggestion.targetFamily,
             currentProviderWireName: suggestion.targetProviderWireName,
             model: suggestion.targetModel,
+            currentAddressUsesWsInference:
+                suggestion.targetFamily == VoiceServiceFamily.synthesis,
           ),
           isNull,
           reason: '${suggestion.targetModel} 的落位',
@@ -221,37 +158,11 @@ void main() {
       expect(suggestion, isA<VoiceTierUnsupportedSuggestion>());
       final unsupported = suggestion! as VoiceTierUnsupportedSuggestion;
       expect(unsupported.reason, '这是录音文件转写型号，栖语不支持。');
-      expect(unsupported.targetModel, 'qwen3-asr-flash');
+      expect(unsupported.targetModel, 'qwen-audio-3.1-asr-flash');
     });
   });
 
   group('转写族（票 04 接线，本票只保证查询可用）', () {
-    test('其他转写档填 qwen3-asr-flash 被引导去千问识别档', () {
-      final suggestion = lookupVoiceTierSuggestion(
-        family: VoiceServiceFamily.transcription,
-        currentProviderWireName: 'openai_compatible',
-        model: 'qwen3-asr-flash',
-      );
-      expect(suggestion, isA<VoiceTierSwitchSuggestion>());
-      final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
-      expect(switchSuggestion.targetFamily, VoiceServiceFamily.transcription);
-      expect(switchSuggestion.targetProviderWireName, 'qwen_asr');
-      expect(switchSuggestion.targetModel, 'qwen3-asr-flash');
-      expect(switchSuggestion.defaultEndpoint, qwenAsrDefaultEndpoint);
-      expect(switchSuggestion.reason, '这个型号要走千问识别档。');
-    });
-
-    test('千问识别档填 qwen3-asr-flash：正确落位，不干预', () {
-      expect(
-        lookupVoiceTierSuggestion(
-          family: VoiceServiceFamily.transcription,
-          currentProviderWireName: 'qwen_asr',
-          model: 'qwen3-asr-flash',
-        ),
-        isNull,
-      );
-    });
-
     test('其他转写档填 qwen-audio-3.1-asr-flash 被引导去千问识别档', () {
       final suggestion = lookupVoiceTierSuggestion(
         family: VoiceServiceFamily.transcription,
@@ -301,13 +212,13 @@ void main() {
       final suggestion = lookupVoiceTierSuggestion(
         family: VoiceServiceFamily.transcription,
         currentProviderWireName: 'qwen_asr',
-        model: 'qwen3-tts-flash',
+        model: 'qwen-audio-3.1-tts-flash',
       );
       expect(suggestion, isA<VoiceTierSwitchSuggestion>());
       final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
       expect(switchSuggestion.targetFamily, VoiceServiceFamily.synthesis);
       expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-      expect(switchSuggestion.defaultEndpoint, qwenTtsDefaultEndpoint);
+      expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
     });
   });
 
@@ -316,18 +227,17 @@ void main() {
       final suggestion = lookupVoiceTierSuggestion(
         family: VoiceServiceFamily.synthesis,
         currentProviderWireName: 'volc_tts',
-        model: '  QWEN3-TTS-Flash  ',
+        model: '  QWEN-AUDIO-3.1-TTS-FLASH  ',
       );
       expect(suggestion, isA<VoiceTierSwitchSuggestion>());
       expect((suggestion! as VoiceTierSwitchSuggestion).targetModel,
-          'qwen3-tts-flash');
+          'qwen-audio-3.1-tts-flash');
     });
 
     test('精确匹配：前后多一字、少一字都不命中', () {
       for (final model in [
-        'xqwen3-tts-flash',
-        'qwen3-tts-flashx',
-        'qwen3-tts-flash-realtime-plus',
+        'xqwen-audio-3.1-tts-flash',
+        'qwen-audio-3.1-tts-flashx',
         'qwen-audio-3.1-tts',
       ]) {
         expect(
@@ -352,7 +262,7 @@ void main() {
       'cosyvoice-v2',
       'seed-tts-2.0',
       'qwen-max',
-      'qwen3-tts-flash-2025-09',
+      'unknown-unsupported-model-2025-09',
     ]) {
       for (final family in VoiceServiceFamily.values) {
         for (final tier in [
@@ -379,22 +289,22 @@ void main() {
 
   test('JSON 下发形状：建议字段带 kind 与目标信息', () {
     final switchSuggestion = lookupVoiceTierSuggestion(
-      family: VoiceServiceFamily.synthesis,
+      family: VoiceServiceFamily.transcription,
       currentProviderWireName: 'openai_compatible',
-      model: 'qwen3-tts-flash',
+      model: 'qwen-audio-3.1-asr-flash',
     )! as VoiceTierSwitchSuggestion;
     expect(switchSuggestion.toJson(), {
       'kind': 'switchTier',
-      'targetFamily': 'synthesis',
-      'targetProvider': 'qwen_tts',
-      'targetModel': 'qwen3-tts-flash',
-      'defaultEndpoint': qwenTtsDefaultEndpoint,
-      'reason': '这个型号要走千问朗读档。',
+      'targetFamily': 'transcription',
+      'targetProvider': 'qwen_asr',
+      'targetModel': 'qwen-audio-3.1-asr-flash',
+      'defaultEndpoint': qwenAsrDefaultEndpoint,
+      'reason': '这个型号要走千问识别档。',
     });
 
     final maasSuggestion = lookupVoiceTierSuggestion(
       family: VoiceServiceFamily.synthesis,
-      currentProviderWireName: 'qwen_tts',
+      currentProviderWireName: 'openai_compatible',
       model: 'qwen-audio-3.1-tts-flash',
     )! as VoiceTierSwitchSuggestion;
     expect(maasSuggestion.toJson()['kind'], 'switchTier');
@@ -415,9 +325,9 @@ void main() {
       'kind': 'unsupported',
       'targetFamily': 'synthesis',
       'targetProvider': 'qwen_tts',
-      'targetModel': 'qwen3-tts-flash',
+      'targetModel': 'qwen-audio-3.1-tts-flash',
       'reason': '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。',
-      'defaultEndpoint': qwenTtsDefaultEndpoint,
+      'defaultEndpoint': qwenTtsWsInferenceEndpoint,
     });
   });
 }

@@ -254,7 +254,7 @@ const qwenAsrDefaultEndpoint =
     'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 
 /// 千问语音识别的模型名称缺省值（设置页缺省值）。
-const qwenAsrDefaultModel = 'qwen3-asr-flash';
+const qwenAsrDefaultModel = 'qwen-audio-3.1-asr-flash';
 
 /// 自定义转写档的响应形态：配置里的 wire 名与设置页下拉共用。
 enum SttResponseShape {
@@ -661,28 +661,27 @@ const volcTtsDefaultEndpoint =
 /// 豆包语音合成 2.0 的 Resource-Id（模型名称字段缺省值）。
 const volcTtsDefaultResourceId = 'seed-tts-2.0';
 
-/// 千问语音合成的 DashScope 端点（设置页缺省值）：与千问识别同端点，
-/// 地址本身就是完整端点，请求体直接 POST，不做后缀拼接。
+/// 千问 3.1 语音合成的官方 WS 推理端点（设置页缺省值）：地址本身就是
+/// 完整端点，走 DashScope SpeechSynthesizer WS 推理通道。
 ///
 /// 与 Flutter `tts_settings_client.dart` 同名常量双源同值（设置层按 HTTP
 /// 镜像防御旧版 Host，不与宿主包编译期耦合）：改动需两边同步。
 const qwenTtsDefaultEndpoint =
-    'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+    'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 
 /// 千问语音合成的模型名称缺省值（设置页缺省值；与 Flutter 侧同名常量
 /// 双源同值，改动需两边同步）。
-const qwenTtsDefaultModel = 'qwen3-tts-flash';
+const qwenTtsDefaultModel = 'qwen-audio-3.1-tts-flash';
 
 /// 千问语音合成的音色缺省值（官方示例音色，设置页缺省值）。音色是自由
 /// 输入框：任何千问音色 ID 都能填，暂无预设目录。与 Flutter 侧同名常量
 /// 双源同值（改动需两边同步）；本包内网关空音色回落也用它，单处真相。
-const qwenTtsDefaultVoice = 'Cherry';
+const qwenTtsDefaultVoice = 'longanhuan_v3.1';
 
 /// 语音合成的传输方式（票三）：只归豆包档（volc_tts）——HTTP 分块
 /// （缺省，票二的逐行分块通道）或 WebSocket 双向（边出文本边合成的
-/// 连续供给）。千问档继续型号驱动（型号名以 -realtime 结尾走 WS），
-/// 自定义档不动。设置页只对豆包档露出下拉；WS 地址由 Host 从 baseUrl
-/// 派生，baseUrl 本身始终只允许 http/https。
+/// 连续供给）。千问档走新版通道，自定义档不动。设置页只对豆包档露出下拉；
+/// WS 地址由 Host 从 baseUrl 派生，baseUrl 本身始终只允许 http/https。
 enum TtsTransport {
   httpChunk('http_chunk'),
   wsBidirection('ws_bidirection');

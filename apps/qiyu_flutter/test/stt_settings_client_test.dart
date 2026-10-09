@@ -69,7 +69,7 @@ void main() {
           'provider': 'qwen_asr',
           'baseUrl':
               'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-          'model': 'qwen3-asr-flash',
+          'model': 'qwen-audio-3.1-asr-flash',
         }, 200),
         _ => http.Response('not found', 404),
       },

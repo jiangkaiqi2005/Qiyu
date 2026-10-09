@@ -885,9 +885,8 @@ void main() {
     await repository.saveTts(
       const TtsConfig(
         provider: TtsProviderKind.qwenTts,
-        baseUrl:
-            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-        model: 'qwen3-tts-flash',
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
         apiKey: 'sk-secret-value',
       ),
     );
@@ -1168,15 +1167,15 @@ void main() {
 {
   "tts": {
     "provider": "qwen_tts",
-    "baseUrl": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-    "model": "qwen3-tts-flash",
-    "voice": "Cherry"
+    "baseUrl": "$qwenTtsWsInferenceEndpoint",
+    "model": "qwen-audio-3.1-tts-flash",
+    "voice": "longanhuan_v3.1"
   }
 }
 ''');
     final handwritten = (await repository().loadTts())!;
     expect(handwritten.provider, TtsProviderKind.qwenTts);
-    expect(handwritten.voice, 'Cherry');
+    expect(handwritten.voice, 'longanhuan_v3.1');
 
     // 千问档 http/https 放行（票 07 起 ws/wss 也放行——地址即用户填的
     // 完整 WS 推理端点，ADR 0020 补篇）；其余 scheme 照旧拒绝。

@@ -49,14 +49,14 @@ Currently supported speech input:
 
 - **OpenAI-compatible** (Whisper and other transcription services)
 - **Volcengine Seed ASR** (real-time streaming recognition)
-- **Qwen ASR** (Alibaba Cloud DashScope, default model `qwen3-asr-flash`; the newer `qwen-audio-3.0-asr-flash-filetrans` is not yet supported)
+- **Qwen ASR** (Alibaba Cloud DashScope, default model `qwen-audio-3.1-asr-flash`; the newer `qwen-audio-3.1-asr-flash-filetrans` is not yet supported)
 - **Custom service** (bring your own endpoint, with configurable auth and response parsing)
 
 Currently supported text-to-speech:
 
 - **OpenAI-compatible** (OpenAI TTS, SiliconFlow, etc.)
 - **Volcengine seed-tts-2.0** (built-in dialect voice presets, adjustable speed)
-- **Qwen TTS** (Alibaba Cloud DashScope, default model `qwen3-tts-flash`, free-form voice ID; the newer `qwen-audio-3.1-tts-next` is not yet supported)
+- **Qwen TTS** (Alibaba Cloud DashScope, default model `qwen-audio-3.1-tts-flash`, free-form voice ID; the newer `qwen-audio-3.1-tts-next` is not yet supported)
 - **Custom service** (bring your own endpoint; supports raw bytes, JSON field, or JSON-lines response formats)
 
 For the exact Qwen model names and addresses Qiyu supports, see the [voice model support list](docs/product/voice-models.md).

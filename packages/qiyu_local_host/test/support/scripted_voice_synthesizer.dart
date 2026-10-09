@@ -109,13 +109,13 @@ final class ScriptedTtsGateway
     required String? apiKey,
     required String sessionId,
   }) async {
-    // 与 TtsModelGateway 的分派同口径：豆包档看传输选择、千问档看型号，
-    // 其余组合不开会话（分句层维持票二的分句模式）。假件照抄这条判定，
+    // 与 TtsModelGateway 的分派同口径：豆包档看传输选择、千问档看 WS 推理，
+    // 其余组合不开会话（分句层维持分句模式）。假件照抄这条判定，
     // 否则任何配置都会被会话模式接管，分句用例全部失真。
     final supported = switch (config.provider) {
       TtsProviderKind.volcTts =>
         config.transport == TtsTransport.wsBidirection,
-      TtsProviderKind.qwenTts => isQwenRealtimeTtsModel(config.model),
+      TtsProviderKind.qwenTts => qwenTtsUsesWsInference(config.baseUrl),
       TtsProviderKind.openAiCompatible || TtsProviderKind.custom => false,
     };
     // 门先于档位判定等待：这样“迟到的 null”（不支持档位经门延迟后返回 null）也能被用例回放，覆盖“宽限内落定且落回分句”路径。

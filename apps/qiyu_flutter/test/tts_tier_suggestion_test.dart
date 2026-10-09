@@ -27,7 +27,7 @@ void main() {
           'kind': 'switchTier',
           'targetFamily': 'synthesis',
           'targetProvider': 'qwen_tts',
-          'targetModel': 'qwen3-tts-flash',
+          'targetModel': 'qwen-audio-3.1-tts-flash',
           'defaultEndpoint': qwenTtsDefaultEndpoint,
           'reason': '这个型号要走千问朗读档。',
         },
@@ -68,12 +68,12 @@ void main() {
           'kind': 'unsupported',
           'targetFamily': 'synthesis',
           'targetProvider': 'qwen_tts',
-          'targetModel': 'qwen3-tts-flash',
+          'targetModel': 'qwen-audio-3.1-tts-flash',
           'reason': '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。',
         },
       }).tierSuggestion;
       expect(unsupported!.kind, VoiceSuggestionKind.unsupported);
-      expect(unsupported.targetModel, 'qwen3-tts-flash');
+      expect(unsupported.targetModel, 'qwen-audio-3.1-tts-flash');
     });
 
     test('表 miss 与成功结果不带建议', () {
@@ -286,7 +286,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),
@@ -297,7 +297,7 @@ void main() {
       expect(find.text('这个型号要走千问朗读档。'), findsOneWidget);
       expect(find.byKey(const Key('tts-tier-suggestion-apply')), findsOneWidget);
       // 明细多行合并在同一个 Text 里：按子串找。
-      expect(find.textContaining('建议型号：qwen3-tts-flash'), findsOneWidget);
+      expect(find.textContaining('建议型号：qwen-audio-3.1-tts-flash'), findsOneWidget);
 
       // 表 miss：普通失败行，没有卡片与按钮。
       gateway.testResult = const TtsConnectionTest(
@@ -317,7 +317,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),
@@ -345,7 +345,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),
@@ -362,7 +362,7 @@ void main() {
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-confirm')));
       await tester.pumpAndSettle();
 
-      expect(field(tester, 'tts-model').controller!.text, 'qwen3-tts-flash');
+      expect(field(tester, 'tts-model').controller!.text, 'qwen-audio-3.1-tts-flash');
       expect(
         field(tester, 'tts-base-url').controller!.text,
         qwenTtsDefaultEndpoint,
@@ -452,7 +452,7 @@ void main() {
           kind: VoiceSuggestionKind.unsupported,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),
@@ -464,7 +464,7 @@ void main() {
         find.text('这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。'),
         findsOneWidget,
       );
-      expect(find.text('可以改用 qwen3-tts-flash。'), findsOneWidget);
+      expect(find.text('可以改用 qwen-audio-3.1-tts-flash。'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-apply')));
       await tester.pumpAndSettle();
@@ -473,7 +473,7 @@ void main() {
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-confirm')));
       await tester.pumpAndSettle();
 
-      expect(field(tester, 'tts-model').controller!.text, 'qwen3-tts-flash');
+      expect(field(tester, 'tts-model').controller!.text, 'qwen-audio-3.1-tts-flash');
       expect(
         field(tester, 'tts-base-url').controller!.text,
         qwenTtsDefaultEndpoint,
@@ -520,8 +520,6 @@ void main() {
       expect(inDialog(find.textContaining(qwenTtsWsInferenceEndpoint)), findsOneWidget);
       expect(inDialog(find.textContaining('API Key：清空重填')), findsOneWidget);
       expect(inDialog(find.textContaining('新版端点需自有百炼 Key')), findsNothing);
-      // 现行缺省端点（3.1 打它必被 400 拒绝）不得出现在对话框或表单里。
-      expect(find.textContaining(qwenTtsDefaultEndpoint), findsNothing);
       await tester.tap(inDialog(find.byKey(const Key('tts-tier-suggestion-confirm'))));
       await tester.pumpAndSettle();
 
@@ -545,7 +543,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'transcription',
           targetProvider: 'qwen_asr',
-          targetModel: 'qwen3-asr-flash',
+          targetModel: 'qwen-audio-3.1-asr-flash',
           reason: '这个型号要走千问识别档。',
         ),
       );
@@ -584,7 +582,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),
@@ -613,7 +611,7 @@ void main() {
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
-          targetModel: 'qwen3-tts-flash',
+          targetModel: 'qwen-audio-3.1-tts-flash',
           reason: '这个型号要走千问朗读档。',
           defaultEndpoint: qwenTtsDefaultEndpoint,
         ),

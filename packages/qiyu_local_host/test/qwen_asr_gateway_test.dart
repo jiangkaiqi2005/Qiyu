@@ -15,12 +15,12 @@ void main() {
     provider: SttProviderKind.qwenAsr,
     baseUrl:
         'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-    model: 'qwen3-asr-flash',
+    model: 'qwen-audio-3.1-asr-flash',
   );
   const compatibleConfig = SttConfig(
     provider: SttProviderKind.qwenAsr,
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    model: 'qwen3-asr-flash',
+    model: 'qwen-audio-3.1-asr-flash',
   );
 
   Map<String, Object?> bodyOf(RecordingHttpClient client) =>
@@ -63,7 +63,7 @@ void main() {
     expect(client.headers['content-type'], 'application/json');
     // 逐字段比对：固定中文识别、文本规整关、data URL 的 mediatype 跟容器。
     expect(bodyOf(client), {
-      'model': 'qwen3-asr-flash',
+      'model': 'qwen-audio-3.1-asr-flash',
       'input': {
         'messages': [
           {
@@ -239,7 +239,7 @@ void main() {
     // 兼容形状也不拼后缀：地址本身就是完整端点。
     expect(client.uri.toString(), compatibleConfig.baseUrl);
     expect(bodyOf(client), {
-      'model': 'qwen3-asr-flash',
+      'model': 'qwen-audio-3.1-asr-flash',
       'messages': [
         {
           'role': 'user',
@@ -301,7 +301,7 @@ void main() {
         config: SttConfig(
           provider: SttProviderKind.qwenAsr,
           baseUrl: scenario.url,
-          model: 'qwen3-asr-flash',
+          model: 'qwen-audio-3.1-asr-flash',
         ),
         apiKey: 'sk-qwen',
         audio: [1],
@@ -557,7 +557,7 @@ void main() {
         config: const SttConfig(
           provider: SttProviderKind.qwenAsr,
           baseUrl: 'https://dashscope.aliyuncs.com/api/v1/\u200Bgeneration',
-          model: 'qwen3-asr-flash',
+          model: 'qwen-audio-3.1-asr-flash',
         ),
         apiKey: 'sk-qwen',
         audio: [0],
@@ -579,7 +579,7 @@ void main() {
         config: const SttConfig(
           provider: SttProviderKind.qwenAsr,
           baseUrl: qwenAsrDefaultEndpoint,
-          model: 'qwen3-asr-flash测试',
+          model: 'qwen-audio-3.1-asr-flash测试',
         ),
         apiKey: 'sk-qwen',
         audio: [0],
@@ -718,7 +718,7 @@ void main() {
           config: SttConfig(
             provider: SttProviderKind.qwenAsr,
             baseUrl: baseUrl,
-            model: 'qwen3-asr-flash',
+            model: 'qwen-audio-3.1-asr-flash',
           ),
           apiKey: 'sk-qwen',
           audio: [0],

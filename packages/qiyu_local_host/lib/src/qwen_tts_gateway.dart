@@ -8,26 +8,9 @@ import 'provider_config.dart';
 import 'speech_audio_download.dart';
 import 'tts_gateway.dart';
 
-/// 千问语音合成（qwen_tts）网关：阿里云百炼 DashScope 的多模态接口。
-/// 与千问识别同端点：地址栏填完整端点，不做后缀拼接。非流式合成——
-/// POST 完响应只给一个 24 小时有效的公网音频地址，再经下载通道取回
-/// 完整音频字节，两个请求拿到一个完整文件。ADR 0002 的整段合成语义
-/// 不变：音频只在内存流转，Host 不落盘。
-///
-/// 流式合成（票二）：同一端点加 `X-DashScope-SSE: enable` 请求头，
-/// 中间块的 `output.audio.data` 即 base64 音频段，逐块转音频事件；
-/// 最后一块 `data` 为空串并给出完整音频 URL、`finish_reason` 变
-/// `stop`。型号决定 API 家族（ADR 0015）：`qwen3-tts-flash` 走 HTTP
-/// SSE 流式（设置页提示流式型号名）；`qwen-audio-3.1-tts-next` 官方
-/// 标注 Non-streaming，不用于流式场景（ADR 0018 修订记录）。
-///
-/// 地址派形状（ADR 0020）：地址主机含 `maas.aliyuncs.com` 走 3.1 官方
-/// SpeechSynthesizer 端点（CosyVoice 家族请求体，见 [_maasRequestBody]），
-/// 否则走现行 multimodal 形状——沿用千问识别档「地址长相唯一确定形状」
-/// 的先例，一个档内用户不需要理解两种形状。3.1 新形状首版只接整段
-/// （SSE 逐块形状未实测，前置实测无可用通路，不赌）：流式接口按 E1
-/// 降级成句子级整段（每句一个完整容器块），设置页型号说明同步标注
-/// 「流式待补」。
+/// 千问语音合成（qwen_tts）HTTP 网关：阿里云百炼 3.1 SpeechSynthesizer 端点
+/// （CosyVoice 家族）。非流式合成——POST 完响应只给一个 24 小时有效的公网
+/// 音频地址，再经下载通道取回完整音频字节；流式接口按 E1 降级成句子级整段。
 final class QwenTtsGateway
     implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
   const QwenTtsGateway(this.httpClient);
@@ -45,11 +28,7 @@ final class QwenTtsGateway
     final uri = Uri.parse(config.baseUrl.trim());
     // TTS 是新增出网路径：出网前统一过 SSRF 校验（与 STT 共用判定）。
     ensureTtsOutboundAllowed(uri);
-    // 形状只判定一次：请求体按地址分派（两种形状的非流式响应同为
-    // output.audio.url 形态，提取与下载跳共用一份）。
-    final body = qwenTtsUsesMaasShape(uri)
-        ? _maasRequestBody(config: config, text: text)
-        : _requestBody(config: config, text: text);
+    final body = _maasRequestBody(config: config, text: text);
     final response = await postTtsBytes(
       httpClient: httpClient,
       uri: uri,
@@ -83,94 +62,12 @@ final class QwenTtsGateway
     required TtsConfig config,
     required String? apiKey,
     required String text,
-  }) {
-    // 3.1 新形状首版只接整段（SSE 逐块形状未实测，不赌）：按 E1 降级
-    // ——本句走一次整段合成，收成一个完整容器块，分句层照常按句等
-    // 整段返回（设置页型号说明同步标注流式待补）。校验（配置、Key、
-    // SSRF）与请求体分派都由整段路径负责，这里不重复。
-    if (qwenTtsUsesMaasShape(Uri.parse(config.baseUrl.trim()))) {
-      return _maasWholeSegmentStream(
+  }) =>
+      _maasWholeSegmentStream(
         config: config,
         apiKey: apiKey,
         text: text,
       );
-    }
-    return guardTtsAudioStream(() async* {
-    config.validate();
-    final key = requireTtsApiKey(apiKey);
-    final uri = Uri.parse(config.baseUrl.trim());
-    ensureTtsOutboundAllowed(uri);
-    final response = await postTtsBytes(
-      httpClient: httpClient,
-      uri: uri,
-      headers: {
-        'authorization': 'Bearer $key',
-        'content-type': 'application/json',
-        // 官方流式开关：中间块即 base64 音频段（与整段同一请求体）。
-        'X-DashScope-SSE': 'enable',
-      },
-      body: utf8.encode(_requestBody(config: config, text: text)),
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final errorBytes = await consumeTtsBytesResponse(response);
-      throw fromTtsModelFailure(
-        providerStatusFailure(
-          response.statusCode,
-          latin1.decode(errorBytes, allowInvalid: true),
-          serviceLabel: '语音合成服务',
-        ),
-      );
-    }
-    var produced = false;
-    var finished = false;
-    // 一路流的协商采样率：带头（WAV 片段）的块读回头里的值并沿用给
-    // 后续裸块——播放端只按首块初始化，一路流内不会变。
-    int? streamSampleRate;
-    await for (final line in response.body
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
-      final payload = _sseDataPayload(line);
-      if (payload == null) {
-        continue;
-      }
-      final audio = _extractStreamAudio(payload);
-      if (audio.finished) {
-        finished = true;
-        break;
-      }
-      final data = audio.data;
-      if (data == null || data.isEmpty) {
-        continue;
-      }
-      final normalized = _normalizeChunk(_decodeBase64(data));
-      // 先接采样率再跳空片段：只有容器头没有 data 的片段也带着协商
-      // 采样率，丢了它整路流的标注就错（后续裸块经 ??= 沿用它）。
-      streamSampleRate ??= normalized.sampleRate;
-      if (normalized.pcm.isEmpty) {
-        continue;
-      }
-      produced = true;
-      yield VoiceAudioChunk(
-        bytes: normalized.pcm,
-        sampleRate: streamSampleRate ?? qwenTtsPcmSampleRate,
-      );
-    }
-    if (!finished) {
-      // 没见到 finish_reason=stop（或等价的收束块）就断流：半截音频
-      // 不能用，与豆包结束码同律。
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '语音合成服务返回的音频不完整。',
-      );
-    }
-    if (!produced) {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '语音合成服务没有返回音频。',
-      );
-    }
-    });
-  }
 
   /// 3.1 新形状的流式接口（E1 降级）：本句整段合成收成一个完整容器块。
   /// 不套 [guardTtsAudioStream] 的外层空闲计时——首块要等合成 POST 与
@@ -190,27 +87,8 @@ final class QwenTtsGateway
     );
   }
 
-  /// 请求体：整段与流式同一形状（官方明示流式与非流式响应结构相同）。
-  String _requestBody({required TtsConfig config, required String text}) {
-    final voice = config.voice?.trim();
-    final input = <String, Object?>{
-      'text': text,
-      // 用户没填音色时用协议缺省（官方示例音色，与设置页缺省同源）。
-      'voice': voice == null || voice.isEmpty ? qwenTtsDefaultVoice : voice,
-      'language_type': 'Chinese',
-    };
-    final extra = config.extraParams;
-    return jsonEncode({
-      'model': config.model.trim(),
-      // 高级参数深合并进 input：千问的 instructions 类字段就在 input 下
-      // （换 instruct 模型时传指令控制）。
-      'input': extra == null ? input : mergeTtsExtraIntoInput(input, extra),
-    });
-  }
-
-  /// 3.1 新形状请求体（官方 SpeechSynthesizer 端点，CosyVoice 家族，
-  /// 形状经前置实测与官方文档核实）：input 带 text/voice/format/
-  /// sample_rate，无现行形状的 language_type。高级参数按既有千问档
+  /// 3.1 请求体（官方 SpeechSynthesizer 端点，CosyVoice 家族）：
+  /// input 带 text/voice/format/sample_rate。高级参数按既有千问档
   /// 合并语义深合并进 input——官方新增字段（如 CosyVoice 的
   /// instruction）由此透传，用户显式写的 format/sample_rate 覆盖缺省。
   String _maasRequestBody({required TtsConfig config, required String text}) {
@@ -218,8 +96,6 @@ final class QwenTtsGateway
     final fallbackVoice = qwenTtsDefaultVoiceForModel(config.model);
     final input = <String, Object?>{
       'text': text,
-      // 音色空缺回落本家族官方示例音色（与现行形状回落 Cherry 同律，
-      // 3.1 专属音色与 3.0 音色按型号区分回落）。
       'voice': voice == null || voice.isEmpty ? fallbackVoice : voice,
       'format': 'wav',
       'sample_rate': qwenTtsPcmSampleRate,
@@ -230,85 +106,11 @@ final class QwenTtsGateway
       'input': extra == null ? input : mergeTtsExtraIntoInput(input, extra),
     });
   }
-
-  /// SSE 行 → data 载荷：容忍官方两种常见帧形态（`data: {...}` 与裸
-  /// JSON 行），跳过空行、注释与 id/event/retry 等帧字段。解析不出
-  /// JSON 对象的行返回 null（帧字段不参与业务判定）。
-  static Map<String, Object?>? _sseDataPayload(String rawLine) {
-    var line = rawLine.trim();
-    if (line.isEmpty || line.startsWith(':')) {
-      return null;
-    }
-    if (line.startsWith('data:')) {
-      line = line.substring('data:'.length).trim();
-      if (line.isEmpty) {
-        return null;
-      }
-    }
-    final lower = line.toLowerCase();
-    for (final field in ['id:', 'event:', 'retry:']) {
-      if (lower.startsWith(field)) {
-        return null;
-      }
-    }
-    try {
-      final parsed = jsonDecode(line);
-      return parsed is Map<String, Object?> ? parsed : null;
-    } on Object {
-      return null;
-    }
-  }
-
-  /// 从一个 SSE 块取音频段与收束信号：`output.audio.data` 是 base64
-  /// 音频段；`finish_reason` 为 `stop`（或等价的「data 空 + url 在」）
-  /// 即收束。
-  static ({String? data, bool finished}) _extractStreamAudio(
-    Map<String, Object?> payload,
-  ) {
-    final output = payload['output'];
-    if (output is! Map<String, Object?>) {
-      return (data: null, finished: false);
-    }
-    final audio = output['audio'];
-    if (audio is! Map<String, Object?>) {
-      return (data: null, finished: false);
-    }
-    final data = audio['data'];
-    final finishReason = audio['finish_reason'];
-    final url = audio['url'];
-    final finished =
-        finishReason == 'stop' ||
-        (url is String && url.isNotEmpty && (data is! String || data.isEmpty));
-    return (
-      data: data is String ? data : null,
-      finished: finished,
-    );
-  }
-
-  static Uint8List _decodeBase64(String data) {
-    try {
-      return base64.decode(data);
-    } on Object {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '语音合成服务返回的内容无法解析。',
-      );
-    }
-  }
-
-  /// 把一个 SSE 音频段归一成裸 PCM（票二）：委托顶层 [qwenTtsNormalizeWavChunk]
-  /// （千问朗读档的 WS 推理通道（票 07）与 SSE 流共用同一份剥头口径）。
-  static ({Uint8List pcm, int? sampleRate}) _normalizeChunk(Uint8List bytes) =>
-      qwenTtsNormalizeWavChunk(bytes);
 }
 
-/// 把一段可能带 RIFF/WAVE 容器头的音频字节归一成裸 PCM（票二引入，票 07
-/// 起千问 WS 推理通道共用）：DashScope 文档未载明中间块的音频格式（只称
-/// 「Base64 编码的音频片段」，唯一线索是完整音频 URL 为 .wav），请求侧
-/// 也没有格式参数。块带 RIFF/WAVE 头就按块遍历定位 `fmt `/`data` 两个
-/// 子块（**不按固定 44 字节**——带 LIST 等扩展块时 data 不在固定偏移，
-/// 固定剥会剥错），剥掉容器只留裸样本，并读回 fmt 里的协商采样率；裸
-/// PCM 块不以 RIFF 开头，原样通过。
+/// 把一段可能带 RIFF/WAVE 容器头的音频字节归一成裸 PCM（千问 WS 推理通道共用）：
+/// 块带 RIFF/WAVE 头就按块遍历定位 fmt/data 两个子块剥掉容器只留裸样本，
+/// 并读回 fmt 里的协商采样率；裸 PCM 块不以 RIFF 开头，原样通过。
 ///
 /// 返回的 pcm 可能为空（只有容器头没有 data 的片段），sampleRate 仍会
 /// 带回——调用方据此统一一路流的采样率标注。
@@ -365,22 +167,13 @@ final class QwenTtsGateway
   return (pcm: Uint8List(0), sampleRate: sampleRate);
 }
 
-/// qwen_tts 档的形状分派（ADR 0020）：地址主机含 `maas.aliyuncs.com`
-/// 走 3.1 官方 SpeechSynthesizer 形状（CosyVoice 家族请求体），否则走
-/// 现行 multimodal 形状。沿用千问识别档「地址长相唯一确定形状」的先例
-/// （地址路径定识别形状，这里主机定合成形状），不新增独立档位、不引入
-/// 占位符语法——用户把官方地址里的业务空间 ID 替换好后整条填入。只看
-/// 主机不看路径与端口：官方端点路径由用户整条粘贴，Host 不校验也不
-/// 改写它。
+/// qwen_tts 档的形状分派：地址主机含 `maas.aliyuncs.com` 走 3.1 官方
+/// SpeechSynthesizer 形状（CosyVoice 家族请求体）。
 bool qwenTtsUsesMaasShape(Uri uri) =>
     uri.host.toLowerCase().contains('maas.aliyuncs.com');
 
-/// qwen_tts 档的第三形状分派（票 07，ADR 0020 补篇）：地址 scheme 为
-/// ws/wss 走 DashScope 经典 SpeechSynthesizer WS 推理协议（`/api-ws/v1/
-/// inference` 事件流）。地址即用户填的完整推理端点，Host 不派生路径，
-/// 只在路径空缺时补默认值（见 `QwenWsInferenceTtsGateway`）。判定只看
-/// scheme，主机与路径不参与——maas 主机配 wss 地址同样落 WS 推理
-/// （分派优先级：型号驱动 > 地址 scheme > maas 主机）。
+/// qwen_tts 档的 WS 推理分派：地址 scheme 为 ws/wss 走 DashScope 经典
+/// SpeechSynthesizer WS 推理协议（`/api-ws/v1/inference` 事件流）。
 bool qwenTtsUsesWsInference(String baseUrl) {
   final uri = Uri.tryParse(baseUrl.trim());
   if (uri == null) {
@@ -390,22 +183,13 @@ bool qwenTtsUsesWsInference(String baseUrl) {
   return scheme == 'ws' || scheme == 'wss';
 }
 
-/// 3.x 新形状（CosyVoice 家族）3.0 模型的音色缺省值：官方文档示例音色。与现行
-/// 形状的 [qwenTtsDefaultVoice] 同律——音色是自由输入框，空缺时按本
-/// 家族的官方示例回落（网关层兜底，不另设配置项）。
-const qwenTtsMaasDefaultVoice = 'longanhuan_v3.6';
-
 /// 千问 3.1 语音合成模型的默认音色：官方首推女声（3.1 引擎层只认 3.1 专属音色）。
 const qwenTts31DefaultVoice = 'longanhuan_v3.1';
 
-/// 根据型号为 3.x CosyVoice 家族推断默认音色：3.1 模型回落 [qwenTts31DefaultVoice]，
-/// 其余（如 3.0）回落 [qwenTtsMaasDefaultVoice]。
-String qwenTtsDefaultVoiceForModel(String model) =>
-    model.contains('3.1') ? qwenTts31DefaultVoice : qwenTtsMaasDefaultVoice;
+/// 根据型号获取千问 3.1 语音合成默认音色。
+String qwenTtsDefaultVoiceForModel(String model) => qwenTtsDefaultVoice;
 
-/// 千问 SSE 音频段的协商采样率：DashScope 实时/流式通道的 PCM 基准
-/// （24kHz 单声道 16-bit，官方 SDK 的 PCM_24000HZ_MONO_16BIT 同源）。
-/// 播放端按语音块事件携带的采样率初始化，这里只作块上的标注值。
+/// 千问音频段的协商采样率：PCM 基准（24kHz 单声道 16-bit）。
 const qwenTtsPcmSampleRate = 24000;
 
 /// 从非流式响应里取音频地址：output.audio.url。容忍解码——非 JSON、

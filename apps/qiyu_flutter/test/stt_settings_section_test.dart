@@ -45,7 +45,7 @@ void main() {
     expect(value.modelController.text, 'volc.seedasr.sauc.duration');
   });
 
-  test('未配置的千问协议回填 DashScope 完整端点与 qwen3-asr-flash', () {
+  test('未配置的千问协议回填 DashScope 完整端点与 qwen-audio-3.1-asr-flash', () {
     final value = form();
     value.selectProvider('qwen_asr');
 
